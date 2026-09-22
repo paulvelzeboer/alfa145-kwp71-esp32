@@ -14,3 +14,8 @@ build/
 
 # 6.7 MB capture without a time column (from before check_wakeup.py was fixed)
 captures/wakeup_capture.csv
+
+# Car maker logo: trademarked, so not published here. Generate the header
+# locally from your own image: python3 tools/make_logo_header.py logo.png
+logo.png
+firmware/kwp71_m2104_esp32/logo_data.h

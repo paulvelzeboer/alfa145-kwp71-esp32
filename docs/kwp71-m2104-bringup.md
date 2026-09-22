@@ -1,8 +1,6 @@
 # ESP32 CYD → ISO 9141 Click → Bosch M2.10.4: KWP71 bring-up plan
 
-> Exported on 2026-09-22 from the living doc: https://claude.ai/code/artifact/4488af84-1628-4651-98c8-372a3f4a854b
->
-> Paths in this repo: sketches are in `firmware/`, Python tools in `tools/`, logic analyzer captures in `captures/`.
+Sep 21, 2026 · @Someone
 
 ## Goal and starting point
 
@@ -245,7 +243,7 @@ The displayed values (`Batt: 0.21V RPM: 51 Cool: 140.4C`) are wrong with the sim
 
 **What the simulator can and can't tell you:**
 
-- **Real values:** 0x10, 4800 baud, 0x55 after 180 ms followed by 32 86 04 15 26 (keyword 0x86 → reply 79), the reversed part number, and LEN not counting the 0x03 (wrong for the real ECU: LEN counts the 0x03, see P5).
+- **Real values:** 0x10, 4800 baud, 0x55 after \~190 ms followed by 32 86 04 15 26 (keyword 0x86 → reply 79), all three ID blocks, the real battery/rpm/coolant answers, LEN counting the 0x03, and the ECU's two quirks (LEN of the first block sent twice, NAK for the first request).
 - **Placeholders:** the gaps between the bytes after 0x55, every other delay, the block type bytes, info block 2, and the data answers.
 - **Timing:** USB adds up to about 16 ms per read. A pass shows the firmware's logic is right; the real ECU remains the final test.
 - **Expected note:** `note: tester LEN 03, this ECU profile would use 02` is normal. The sketch's `sendBlock()` counts the 0x03 in LEN, and the real ECU accepted that from the Python tool.
@@ -342,7 +340,7 @@ How `readBlock()` handles a block (corrected 22 Sep 2026 from a raw trace on the
 - **Fallback:** if the 0x03 isn't where LEN says, it logs `expected EOB after N bytes … scanning on` and keeps searching up to LEN + 4 bytes.
 - **Raw trace:** when a block fails, the sketch prints every byte with a microsecond timestamp: `TX` sent, `SE` self-echo, `RX` from the ECU.
 
-`kwp71_m2_10_4.py` and `m2104_sim.py` still assume that LEN excludes the 0x03, and they don't handle the repeated LEN yet.
+`kwp71_m2_10_4.py` and `m2104_sim.py` were corrected the same way on 22 Sep 2026: LEN counts the 0x03, a repeated LEN is echoed without being stored, the counter starts at 0, and every echo waits `--echo-delay-ms` (default 10). The simulator also copies both ECU quirks. Both were tested against each other over a simulated K-line, not against the ECU.
 
 **Pass:**
 
@@ -377,28 +375,32 @@ Still open:
 
 ## Dashboard on the CYD screen
 
-The CYD's screen shows a live dashboard: an rpm gauge, battery and coolant, the connection status, and the ECU's ID numbers. The detailed log stays on the Serial Monitor at 115200 baud. The layout was confirmed in demo mode on 22 Sep 2026. The smoother version described below compiles, but hasn't been uploaded or tested yet.
+The CYD's screen shows a live dashboard: an rpm gauge, four values in a 2 × 2 grid, the connection status, and the ECU's ID numbers. A boot splash shows the car badge for 5 s first. The detailed log stays on the Serial Monitor at 115200 baud. The layout was confirmed in demo mode on 22 Sep 2026; the smoother polling has not been tested on the ECU yet.
 
 ```text
-┌──────────────────────────────────────────────┐
-│ ALFA 145 QV  M2.10.4             ● CONNECTED │  status bar
-│        ╭──── 4 ────╮          ┌─ BATTERY ──┐ │
-│     2 ╱  ▓▓▓▓▓▓     ╲ 6       │    12.27 V │ │
-│      │▓     850     │         └────────────┘ │
-│      │▓     rpm      │▓▓      ┌─ COOLANT ──┐ │
-│     0     x1000       8       │    18.0 °C │ │
-│                               └────────────┘ │
-│ HW 0261204478  SW 1037357941  PN 46525168    │  bottom line
+┌────────────────────────────────────────────┐
+│ (badge) ALFA 145 QV           ● CONNECTED │  status bar
+│      ╭─────────╮     ┌BATTERY ──┬COOLANT ──┐ │
+│    ╱  ▓▓▓▓▓      ╲    │    V    │   °C    │ │
+│   │      850      │   │  12.27  │  18.0   │ │
+│   │▓     rpm      │▓▓ ├AIR TEMP─┼AIR QTY ─┤ │
+│    ╲    x1000    ╱    │   °C    │  kg/h   │ │
+│   0                8  │  21.5   │   21    │ │
+│                       └─────────┴─────────┘ │
+│ HW 0261204478  SW 1037357941  PN 46525168 │  bottom line
 └──────────────────────────────────────────────┘
 ```
 
 | Element | Position (320 × 240) | Shows | Colours |
 | --- | --- | --- | --- |
-| Status bar | top, 0–24 px | title, plus the connection status on the right | see the status table |
-| RPM gauge | left: centre (100, 124), radius 92, 14 px ring, 240° sweep | bar from 0 to 8000 rpm, ticks every 1000, big number in 10 rpm steps | bar green < 5000, yellow 5000–6499, red ≥ 6500; track grey, red zone dark red |
-| Battery | box at (204, 30), 112 × 86 | volts, 2 decimals | red < 11.8, yellow < 12.2, green ≤ 14.8, red above |
-| Coolant | box at (204, 124), 112 × 86 | °C, 1 decimal | light blue < 60, green 60–105, red > 105 |
-| Bottom line | 214–240 px | the ID numbers once connected; before that, the latest step (e.g. `Waiting for 0x55 sync...`) | grey / the step's colour |
+| Status bar | top, 0–24 px | car badge (20 px), "ALFA 145 QV", and the connection status on the right | see the status table |
+| RPM gauge | left: centre (84, 128), radius 72, 12 px ring, 240° sweep | bar from 0 to 8000 rpm, ticks every 1000, 0 and 8 at the ends, big number in 10 rpm steps | bar green < 5000, yellow 5000–6499, red ≥ 6500; track grey, red zone dark red |
+| Value grid | right: 2 × 2 cells of 74 × 84 px from (164, 30) | title, unit centred below it, then the value | per value, see below |
+|  Battery (top left) |  | volts, 2 decimals | red < 11.8, yellow < 12.2, green ≤ 14.8, red above |
+|  Coolant (top right) |  | °C, 1 decimal | light blue < 60, green 60–105, red > 105 |
+|  Air temp (bottom left) |  | °C, 1 decimal | light blue < 5, green 5–60, red > 60 |
+|  Air quantity (bottom right) |  | kg/h, whole numbers. **Not requested from the ECU yet**, so it stays `--` | white |
+| Bottom line | 214–240 px | the ID numbers once connected; before that, the latest step | grey / the step's colour |
 
 `--` means there's no value yet, for example before the first reading, or after the ECU's first-request NAK.
 
@@ -423,7 +425,8 @@ The CYD's screen shows a live dashboard: an rpm gauge, battery and coolant, the 
 | --- | --- | --- |
 | `RPM_MAX`, `RPM_WARN`, `RPM_RED` | 8000, 5000, 6500 | gauge end, start of yellow, start of red |
 | `DASH_FRAME_MS` | 40 | frame time of the display task (\~25 fps) |
-| `RPM_SMOOTHING` | 0.30 | how fast the gauge follows a new reading |
+| `RPM_SMOOTHING` | 0.18 | how fast the gauge follows a new reading (0.30 first, looked too twitchy) |
+| `SPLASH_MS` | 5000 | how long the boot splash stays up (it delays the first handshake by that much) |
 | `DEMO_MODE` | 0 | 1 = simulated values, no K-line traffic |
 
 ### Screen setup for this CYD
@@ -433,8 +436,22 @@ This panel needs three settings that the TFT\_eSPI `User_Setup.h` doesn't make. 
 1. **Backlight on:** pin 21 high. TFT\_eSPI only switches it on when `TFT_BACKLIGHT_ON` is defined. Without this the screen stays black.
 2. **Colour inversion off:** `tft.invertDisplay(false)`. The ST7789 driver switches inversion on during `init()`, which made black show as white.
 3. **BGR colour order:** MADCTL = `MX | MV | BGR`, written after `setRotation(1)`. Without it, red and blue are swapped.
+4. **Byte swap for images:** `tft.setSwapBytes(true)` around each `pushImage()` (and off again afterwards). The library's own drawing handles byte order itself; `pushImage()` doesn't, and without it the badge's colours come out wrong.
 
 The alternative, which covers all sketches, is to add `#define TFT_BACKLIGHT_ON HIGH`, `#define TFT_INVERSION_OFF` and `#define TFT_RGB_ORDER TFT_BGR` to `User_Setup.h`.
+
+### Boot splash and the badge
+
+On power-up the screen shows the car badge (200 × 200) with "ALFA 145 QV" and "by Paul Velzeboer" under it, for `SPLASH_MS` = 5 s. A 20 px badge also sits in the status bar.
+
+The image is **not in the repository**: a car maker's logo is their trademark, so `logo.png` and the generated `logo_data.h` are in `.gitignore`. Generate the header from your own image:
+
+```sh
+pip install pillow
+python3 tools/make_logo_header.py logo.png
+```
+
+It cuts the background away (flood fill from the edges, so white inside the badge stays), crops to a square, scales to 200 px and 20 px, and writes RGB565 arrays. Options: `--big`, `--small`, `--out`, `--bar`. Without the header the sketch still builds, thanks to `__has_include`: the splash is then text-only and the status bar has no badge.
 
 ### Demo mode
 
@@ -443,6 +460,7 @@ Set `#define DEMO_MODE 1` and upload to check the screen without an ECU.
 - **RPM:** sweeps from 800 to 7600 and back every 8 s.
 - **Battery:** 12.4 V at idle, about 14.1 V above 1000 rpm.
 - **Coolant:** warms from 20 to 90 °C in a minute.
+- **Air temp:** rises from 20 to 38 °C; **air quantity** follows the rpm as a stand-in.
 - **Screen:** shows the ECU's real ID numbers, and the status says **DEMO**.
 
 Values are fed every 300 ms, about the real update rate, so it also shows how the smoothing will look. Set it back to `0` for the ECU; in demo mode the ESP32 never touches the K-line.

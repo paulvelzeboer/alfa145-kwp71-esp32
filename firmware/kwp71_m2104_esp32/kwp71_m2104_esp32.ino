@@ -52,6 +52,16 @@
  */
 
 #include <TFT_eSPI.h>
+// Badge bitmaps: optional. Generate logo_data.h from your own image with
+//   python3 tools/make_logo_header.py logo.png
+// It is not in the repository (car maker logos are trademarks). Without it
+// the splash is text-only and the status bar has no badge.
+#if defined(__has_include)
+#  if __has_include("logo_data.h")
+#    include "logo_data.h"
+#    define HAVE_LOGO 1
+#  endif
+#endif
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
@@ -66,7 +76,7 @@ TFT_eSPI tft = TFT_eSPI();
 // values (rpm sweeping into the red zone, battery, coolant warming up) so
 // the screen can be checked without an ECU. Status bar shows "DEMO".
 // Set to 0 for the real ECU.
-#define DEMO_MODE 0
+#define DEMO_MODE 1
 
 #define ECU_ADDRESS   0x10   // Motronic engine ECU - CONFIRMED working
 #define COMM_BAUD     4800
@@ -114,7 +124,7 @@ unsigned long selfEchoErrors = 0; // bytes whose loopback was missing or wrong
 //
 //   0..24    status bar: title + connection status
 //   left     RPM arc gauge (0-8000, red zone from 6500) with the value inside
-//   right    BATTERY and COOLANT boxes
+//   right    2 x 2 grid: BATTERY | COOLANT over AIR TEMP | AIR QTY
 //   214..240 bottom line: ID numbers once connected, else the latest step
 //
 // Everything is drawn once in dashFrame(); updates only redraw what changed
@@ -127,10 +137,21 @@ unsigned long selfEchoErrors = 0; // bytes whose loopback was missing or wrong
 #define COL_LABEL   0x9CD3      // light grey labels
 #define COL_REDZONE 0x6000      // dark red track in the red zone
 
-#define G_CX   100              // gauge centre
-#define G_CY   124
-#define G_R    92               // outer radius
-#define G_W    14               // ring thickness
+#define G_CX   84               // gauge centre
+#define G_CY   128
+#define G_R    72               // outer radius
+#define G_W    12               // ring thickness
+
+// 2 x 2 value grid on the right: 0 = battery, 1 = coolant, 2 = air temp, 3 = air qty
+#define PANEL_X  164
+#define PANEL_Y  30
+#define CELL_W   74
+#define CELL_H   84
+#define CELL_GAP 4
+#define CELL_BATT 0
+#define CELL_COOL 1
+#define CELL_AIRT 2
+#define CELL_AIRQ 3
 #define G_A0   60               // TFT_eSPI arc angles: 0 = 6 o'clock, clockwise
 #define G_A1   300              // 60..300 = 240 degree sweep over the top
 #define RPM_MAX   8000
@@ -150,6 +171,8 @@ String idHw, idSw, idPn;        // from the ECU's ID blocks
 volatile int   shRpm  = -1;     // target rpm, -1 = no value
 volatile float shBatt = -1;     // V, < 0 = no value
 volatile float shCool = -1000;  // C, <= -999 = no value
+volatile float shAirT = -1000;  // air temperature, C
+volatile float shAirQ = -1;     // air quantity, raw ECU value
 SemaphoreHandle_t dashMutex = NULL;
 String   shStatus = "STARTING";
 uint16_t shStatusCol = TFT_YELLOW;
@@ -158,9 +181,12 @@ String   shBottom = "";
 uint16_t shBottomCol = COL_LABEL;
 bool     shBottomDirty = false;
 
+#define SPLASH_MS       5000    // how long the boot splash stays on screen
 #define DASH_FRAME_MS   40      // ~25 frames per second
-#define RPM_SMOOTHING   0.30f   // fraction of the remaining distance per frame:
-                                // ~90% of a new value within ~7 frames (~0.3 s)
+#define RPM_SMOOTHING   0.18f   // fraction of the remaining distance per frame:
+                                // ~90% of a new value within ~12 frames (~0.5 s).
+                                // Lower = smoother but lags more; 0.30 was the
+                                // first setting and looked slightly too twitchy.
 
 int rpmToAngle(int rpm) {
   if (rpm < 0) rpm = 0;
@@ -194,6 +220,26 @@ void gaugeSet(int rpm) {
   gaugeColor = col;
 }
 
+void drawSplash() {
+  tft.fillScreen(COL_BG);
+#ifdef HAVE_LOGO
+  // Images need the two bytes per pixel swapped; the library's own drawing
+  // calls handle that internally, pushImage() does not.
+  tft.setSwapBytes(true);
+  tft.pushImage((320 - LOGO_BIG_SIZE) / 2, 2, LOGO_BIG_SIZE, LOGO_BIG_SIZE, alfaLogo120);
+  tft.setSwapBytes(false);
+#endif
+  // Two short lines under the badge: car name, then credits.
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, COL_BG);
+  tft.drawString("ALFA 145 QV", 160, 214, 2);
+  tft.setTextColor(COL_LABEL, COL_BG);
+  tft.drawString("by Paul Velzeboer", 160, 230, 1);
+}
+
+int cellX(int i) { return PANEL_X + (i % 2) * (CELL_W + CELL_GAP); }
+int cellY(int i) { return PANEL_Y + (i / 2) * (CELL_H + CELL_GAP); }
+
 void drawText(const String &txt, int x, int y, uint8_t datum, int font, uint16_t fg,
               uint16_t bg, int padding) {
   tft.setTextDatum(datum);
@@ -207,36 +253,53 @@ void drawText(const String &txt, int x, int y, uint8_t datum, int font, uint16_t
 void dashFrame() {
   tft.fillScreen(COL_BG);
   tft.fillRect(0, 0, 320, 24, COL_BAR);
-  drawText("ALFA 145 QV  M2.10.4", 6, 12, ML_DATUM, 2, TFT_WHITE, COL_BAR, 0);
+#ifdef HAVE_LOGO
+  tft.setSwapBytes(true);
+  tft.pushImage(4, (24 - LOGO_SMALL_SIZE) / 2, LOGO_SMALL_SIZE, LOGO_SMALL_SIZE, alfaLogo18);
+  tft.setSwapBytes(false);
+  drawText("ALFA 145 QV", 8 + LOGO_SMALL_SIZE, 12, ML_DATUM, 2, TFT_WHITE, COL_BAR, 0);
+#else
+  drawText("ALFA 145 QV", 6, 12, ML_DATUM, 2, TFT_WHITE, COL_BAR, 0);
+#endif
 
-  // gauge: track, ticks every 1000 rpm, labels 2/4/6 inside, 0 and 8 under the ends
+  // gauge: track, ticks every 1000 rpm, 0 and 8 under the ends
   gaugeTrack(G_A0, G_A1);
   gaugeAngle = G_A0;
   gaugeColor = TFT_GREEN;
   for (int k = 0; k <= 8; k++) {
     float a = (G_A0 + k * (G_A1 - G_A0) / 8) * DEG_TO_RAD;
     float sn = sin(a), cs = cos(a);
-    int r1 = G_R - G_W - 3, r2 = r1 - (k % 2 ? 4 : 8);
+    int r1 = G_R - G_W - 3, r2 = r1 - (k % 2 ? 3 : 6);
     tft.drawLine(G_CX - r1 * sn, G_CY + r1 * cs, G_CX - r2 * sn, G_CY + r2 * cs,
                  k * 1000 >= RPM_RED ? TFT_RED : COL_LABEL);
-    if (k == 2 || k == 4 || k == 6) {
-      int rl = r2 - 9;
-      drawText(String(k), G_CX - rl * sn, G_CY + rl * cs, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
+  }
+  drawText("0", G_CX - 56, G_CY + 48, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
+  drawText("8", G_CX + 56, G_CY + 48, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
+  drawText("rpm", G_CX, G_CY + 36, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
+  drawText("x1000", G_CX, G_CY + 62, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
+
+  // 2 x 2 value grid: title (left), unit (right), value in the middle.
+  // Units live in the labels so the value line can stay as wide as possible.
+  for (int i = 0; i < 4; i++) {
+    int x = cellX(i), y = cellY(i);
+    tft.drawRoundRect(x, y, CELL_W, CELL_H, 5, COL_FRAME);
+    const char *title = i == CELL_BATT ? "BATTERY" : i == CELL_COOL ? "COOLANT" :
+                        i == CELL_AIRT ? "AIR TEMP" : "AIR QTY";
+    // Titles in the small font (font 1): font 2 was too wide for a 74 px cell,
+    // so "AIR TEMP" + unit didn't line up with the others.
+    drawText(title, x + 5, y + 10, ML_DATUM, 1, COL_LABEL, COL_BG, 0);
+    // Unit on its own line under the title, centred over the value.
+    int ux = x + CELL_W / 2;
+    if (i == CELL_BATT) {
+      drawText("V", ux, y + 22, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
+    } else if (i == CELL_AIRQ) {
+      // kg/h as requested; the ECU's scaling for this value is not verified yet
+      drawText("kg/h", ux, y + 22, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
+    } else {                                   // degree sign: built-in fonts have none
+      tft.drawCircle(ux - 2, y + 19, 2, COL_LABEL);
+      drawText("C", ux + 5, y + 22, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
     }
   }
-  drawText("0", G_CX - 70, G_CY + 58, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("8", G_CX + 70, G_CY + 58, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("rpm", G_CX, G_CY + 46, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("x1000", G_CX, G_CY + 64, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
-
-  // value boxes with static labels and units
-  tft.drawRoundRect(204, 30, 112, 86, 6, COL_FRAME);
-  drawText("BATTERY", 212, 40, ML_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("V", 306, 82, MR_DATUM, 4, COL_LABEL, COL_BG, 0);
-  tft.drawRoundRect(204, 124, 112, 86, 6, COL_FRAME);
-  drawText("COOLANT", 212, 134, ML_DATUM, 2, COL_LABEL, COL_BG, 0);
-  tft.drawCircle(289, 168, 3, COL_LABEL);    // degree sign (built-in fonts have none)
-  drawText("C", 308, 176, MR_DATUM, 4, COL_LABEL, COL_BG, 0);
 
   dashReady = true;
 }
@@ -260,11 +323,17 @@ void dashIds() {
   dashBottom("HW " + idHw + "  SW " + idSw + "  PN " + idPn, COL_LABEL);
 }
 
-// battV < 0, rpm < 0, coolantC <= -999 mean "no value" (shown as --).
-void dashValues(float battV, int rpm, float coolantC) {
+// battV < 0, rpm < 0, coolantC/airT <= -999, airQ < 0 mean "no value" (--).
+void dashValues(float battV, int rpm, float coolantC, float airT, float airQ) {
   shBatt = battV;
   shRpm = rpm;
   shCool = coolantC;
+  shAirT = airT;
+  shAirQ = airQ;
+}
+
+void drawCell(int i, const String &txt, uint16_t color) {
+  drawText(txt, cellX(i) + CELL_W / 2, cellY(i) + 58, MC_DATUM, 4, color, COL_BG, CELL_W - 8);
 }
 
 // ---- Display task (core 0): the only code that draws after setup().
@@ -273,7 +342,7 @@ void dashValues(float battV, int rpm, float coolantC) {
 void dashTask(void *param) {
   float shownRpm = 0;
   int drawnRpm = -2;            // -2 = nothing drawn yet, -1 = "--" drawn
-  float drawnBatt = -2, drawnCool = -2;
+  float drawnBatt = -2, drawnCool = -2, drawnAirT = -2, drawnAirQ = -2;
   for (;;) {
     // status bar and bottom line (copied under the mutex, drawn outside it)
     String st, bt;
@@ -316,14 +385,25 @@ void dashTask(void *param) {
     if (bv != drawnBatt) {
       uint16_t col = bv < 0 ? COL_LABEL : bv < 11.8 ? TFT_RED : bv < 12.2 ? TFT_YELLOW :
                      bv <= 14.8 ? TFT_GREEN : TFT_RED;
-      drawText(bv < 0 ? String("--") : String(bv, 2), 288, 82, MR_DATUM, 4, col, COL_BG, 76);
+      drawCell(CELL_BATT, bv < 0 ? String("--") : String(bv, 2), col);
       drawnBatt = bv;
     }
     float cv = shCool;
     if (cv != drawnCool) {
       uint16_t col = cv <= -999 ? COL_LABEL : cv < 60 ? TFT_SKYBLUE : cv <= 105 ? TFT_GREEN : TFT_RED;
-      drawText(cv <= -999 ? String("--") : String(cv, 1), 284, 176, MR_DATUM, 4, col, COL_BG, 72);
+      drawCell(CELL_COOL, cv <= -999 ? String("--") : String(cv, 1), col);
       drawnCool = cv;
+    }
+    float av = shAirT;
+    if (av != drawnAirT) {
+      uint16_t col = av <= -999 ? COL_LABEL : av < 5 ? TFT_SKYBLUE : av <= 60 ? TFT_GREEN : TFT_RED;
+      drawCell(CELL_AIRT, av <= -999 ? String("--") : String(av, 1), col);
+      drawnAirT = av;
+    }
+    float qv = shAirQ;
+    if (qv != drawnAirQ) {
+      drawCell(CELL_AIRQ, qv < 0 ? String("--") : String((int)(qv + 0.5f)), qv < 0 ? COL_LABEL : TFT_WHITE);
+      drawnAirQ = qv;
     }
 
     vTaskDelay(pdMS_TO_TICKS(DASH_FRAME_MS));
@@ -834,7 +914,9 @@ bool pollAndDisplayParams() {
     // the formula (from the Python tool) is NOT verified with a running engine.
     if (len >= 5 && blk[1] == 0xFE) lastRpm = (int)(0.2f * blk[2] * blk[3]);
   }
-  dashValues(lastBatt, lastRpm, lastCool);
+  // TODO: air temp (ADC channel 02 in the Python tool) and air quantity (RAM
+  // address unknown) aren't requested yet - the cells show "--" until they are.
+  dashValues(lastBatt, lastRpm, lastCool, -1000, -1);
 
   if (slot == 9) {                   // one summary line per 10 exchanges
     String line = "Batt: " + (lastBatt > -1 ? String(lastBatt, 2) + "V" : String("--"));
@@ -866,6 +948,8 @@ void setup() {
   tft.writedata(TFT_MAD_MX | TFT_MAD_MV | TFT_MAD_BGR);
   tft.setTextSize(1);
   dashMutex = xSemaphoreCreateMutex();
+  drawSplash();
+  delay(SPLASH_MS);
   dashFrame();
   dashStatus("STARTING", TFT_YELLOW);
   // All drawing from here on happens in dashTask on core 0; loop() (K-line)
@@ -898,7 +982,9 @@ void demoStep() {
   float warm = t / 60.0f;
   if (warm > 1.0f) warm = 1.0f;
   float coolantC = 20.0f + 70.0f * warm + (warm >= 1.0f ? 1.5f * sin(t / 5.0f) : 0.0f);
-  dashValues(battV, rpm, coolantC);
+  float airT = 20.0f + 18.0f * warm + 0.8f * sin(t / 3.0f);
+  float airQ = rpm / 40.0f;                     // stand-in: load roughly follows rpm
+  dashValues(battV, rpm, coolantC, airT, airQ);
   delay(300);                        // ~ the real rpm update rate; the display
                                      // task animates in between
 }
@@ -942,7 +1028,7 @@ void loop() {
     ecuConnected = false;
     dashStatus("RECONNECTING", TFT_ORANGE);
     lastRpm = -1; lastBatt = -1; lastCool = -1000;
-    dashValues(-1, -1, -1000);
+    dashValues(-1, -1, -1000, -1000, -1);
     lastAttempt = millis();
     return;
   }

@@ -26,15 +26,18 @@ WHAT IT DOES (one session, then waits for the next wakeup)
      goes quiet for longer than --session-timeout.
 
 WHAT IS REAL AND WHAT IS A PLACEHOLDER
-  Real (from kwp71_m2_10_4.py + output.txt against this ECU):
-    address 0x10, 4800 baud, 0x55 sync about 180 ms after the stop bit, then
-    "32 86 04 15 26" (keyword byte #1 = 0x86 -> reply 0x79), info block 1 =
-    part number as reversed ASCII "8744021620", LEN does NOT count the
-    trailing 0x03, inverted echo of every byte except 0x03.
-  Placeholders (replace with values from the P0 golden capture via --profile):
-    the gaps between the bytes after 0x55, all other delays, the TYPE bytes
-    of the blocks, info block 2, the final block, and every answer to a data
-    request.
+  Real (raw ESP32 traces and logs against this ECU, 22 Sep 2026):
+    address 0x10, 4800 baud, 0x55 ~190 ms after the stop bit, then
+    "32 86 04 15 26" 10 ms apart (keyword byte #1 = 0x86 -> reply 0x79),
+    first block ~100 ms after the reply, LEN COUNTS the trailing 0x03,
+    inverted echo of every byte except 0x03, the three ID blocks (type F6,
+    reversed ASCII 0261204478 / 1037357941 / 46525168), battery 0x5E,
+    rpm 00 00 (engine off), coolant ADC 00 BB, and two quirks:
+      * the LEN byte of the first block is always sent twice (the ECU
+        ignores the tester's first echo of it)   -> "repeat_first_len"
+      * the first request after the ID blocks gets a NAK -> "nak_first_request"
+  Placeholders (override via --profile): ADC channels other than 03, the
+    NAK's data byte, the fault-code answer, and USB-blurred timings.
 
 USAGE
   python3 m2104_sim.py --port /dev/cu.usbserial-AH01164M
@@ -61,21 +64,23 @@ DEFAULT_PROFILE = {
                                    # by kwp71_m2_10_4.py --probe (22 Sep 2026; that
                                    # tool reads max 5, so more may follow)
     "keyword_index": 1,            # which of them the tester must complement (0x86)
-    "w1_ms": 180,                  # stop-bit end -> 0x55: measured 187 ms on the Mac,
-                                   # which includes up to ~16 ms of USB latency
-    "w2_ms": 10,                   # 0x55 -> first keyword byte (placeholder)
-    "w3_ms": 5,                    # gap between the other keyword bytes (placeholder)
+    "w1_ms": 190,                  # stop-bit end -> 0x55 (ESP32 trace: 192 ms)
+    "w2_ms": 28,                   # 0x55 -> first keyword byte (trace: 30 ms start to start)
+    "w3_ms": 8,                    # between the other keyword bytes (trace: 10 ms)
     "w4_timeout_ms": 1000,         # how long to wait for the complement
-    "first_block_delay_ms": 30,    # complement -> first info block
-    "byte_gap_ms": 1,              # after the tester's echo, before our next byte
-    "turnaround_ms": 2,            # tester byte -> our inverted echo
+    "first_block_delay_ms": 100,   # complement -> first block, and request -> answer
+    "byte_gap_ms": 6,              # after the tester's echo, before our next byte (trace: ~6)
+    "turnaround_ms": 3,            # tester byte -> our inverted echo (trace: ~3)
     "echo_timeout_ms": 500,        # max wait for the tester's echo of our byte
-    "len_includes_eob": False,     # confirmed on this ECU: LEN excludes the 0x03
+    "len_includes_eob": True,      # confirmed on this ECU: LEN counts the 0x03
+    "repeat_first_len": True,      # ECU quirk: LEN of the first block sent twice
+    "nak_first_request": True,     # ECU quirk: first request after the IDs gets a NAK
     "info_blocks": [
-        {"type": "F6", "ascii": "8744021620"},   # part number, reversed (real)
-        {"type": "F6", "ascii": "0000"},         # placeholder: 2nd ID block
+        {"type": "F6", "ascii": "8744021620"},   # 0261204478 Bosch hardware no. (real)
+        {"type": "F6", "ascii": "1497537301"},   # 1037357941 Bosch software no. (real)
     ],
-    "final_block": {"type": "09", "data": ""},   # placeholder
+    # final block: 46525168 Alfa/Fiat part no. + FF FF (real)
+    "final_block": {"type": "F6", "data": "38 36 31 35 32 35 36 34 FF FF"},
     # Answers to tester requests, keyed by the request TYPE byte.
     #   "ram": RAM read "01 <count> <addr hi> <addr lo>" -> <count> bytes
     #   "adc": ADC read "08 <channel>"                    -> fixed bytes
@@ -83,12 +88,12 @@ DEFAULT_PROFILE = {
     "responses": {
         "09": {"kind": "fixed", "type": "09", "data": ""},          # ACK -> ACK
         "01": {"kind": "ram", "type": "FE",
-               "memory": {"0036": "CB", "003B": "32 55"}},          # batt, rpm
-        "08": {"kind": "adc", "type": "FB",
-               "channels": {"01": "00 CB", "02": "00 60", "03": "00 32"}},
-        "07": {"kind": "fixed", "type": "FC", "data": ""},          # no DTCs
+               "memory": {"0036": "5E", "003B": "00 00"}},          # 12.4 V, 0 rpm (real)
+        "08": {"kind": "adc", "type": "FB",                         # ch 03 coolant ~18 C
+               "channels": {"01": "00 5E", "02": "00 B0", "03": "00 BB"}},  # (01/02 guessed)
+        "07": {"kind": "fixed", "type": "FC", "data": ""},          # no DTCs (guessed)
     },
-    "nak": {"type": "0A", "data": ""},           # unknown request
+    "nak": {"type": "0A", "data": "06"},         # data byte as seen for a RAM read NAK
 }
 
 T0 = time.monotonic()
@@ -209,13 +214,20 @@ class EcuSim:
         return r == want
 
     # ---- blocks -----------------------------------------------------------
-    def send_block(self, body, label):
-        """body = [type, data...]; builds LEN CTR body 03 and runs the echo lock-step."""
+    def send_block(self, body, label, repeat_len=False):
+        """body = [type, data...]; builds LEN CTR body 03 and runs the echo lock-step.
+        repeat_len: copy the real ECU's quirk - ignore the tester's first echo of
+        LEN and send LEN again (it does this for its first block)."""
         self.counter = (self.counter + 1) & 0xFF
         payload = [self.counter] + body
         length = len(payload) + (1 if self.p["len_includes_eob"] else 0)
         block = [length] + payload + [EOB]
-        log("-> [%s] %s" % (label, hexs(block)))
+        log("-> [%s] %s%s" % (label, hexs(block), "  (LEN sent twice, like the real ECU)" if repeat_len else ""))
+        if repeat_len:
+            self.k.write_sync(length)
+            e = self.k.read(self.ms("echo_timeout_ms"))
+            log("   ignoring the tester's first echo of LEN (%s)" % ("none" if e is None else "%02X" % e))
+            time.sleep(0.016)                      # real ECU: repeat ~16 ms after the echo
         for i, b in enumerate(block):
             if i:
                 time.sleep(self.ms("byte_gap_ms"))
@@ -303,7 +315,8 @@ class EcuSim:
             return
         time.sleep(self.ms("first_block_delay_ms"))
         for i, spec in enumerate(self.p["info_blocks"]):
-            if not self.send_block(block_body(spec), "info %d" % (i + 1)):
+            if not self.send_block(block_body(spec), "info %d" % (i + 1),
+                                   repeat_len=(i == 0 and self.p["repeat_first_len"])):
                 return
             ack = self.recv_block(1.0)
             if ack is None:
@@ -319,7 +332,10 @@ class EcuSim:
                 log("== session ended after %d requests (tester quiet or broken block) ==" % n)
                 return
             n += 1
-            body, what = self.answer(req)
+            if n == 1 and self.p["nak_first_request"] and req[1] != 0x09:
+                body, what = block_body(self.p["nak"]), "NAK for the first request (like the real ECU)"
+            else:
+                body, what = self.answer(req)
             time.sleep(self.ms("first_block_delay_ms"))
             if not self.send_block(body, what):
                 return

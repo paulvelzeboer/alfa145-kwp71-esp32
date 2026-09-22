@@ -2,25 +2,19 @@
 """
 KWP71 handshake tool for Bosch Motronic ECUs (e.g. M2.10.4) over a KKL / VAG-COM 409.1 cable.
 
-THIS VERSION FIXES A CONFIRMED BUG in read_block(): the previous version
-trusted the ECU's LEN byte as the *exact* number of bytes to read, including
-the final EOB (0x03) terminator. On this M2.10.4 (Bosch 0261204478), a real
-capture showed the ECU sending its own part number as ASCII, reversed
-("8744021620" -> reversed "0261204478" - an EXACT match), followed by an EOB
-byte that arrived ONE byte AFTER the LEN-based read window closed. In other
-words: LEN describes the COUNTER+TYPE+DATA payload size, and the EOB is an
-*extra* byte on top of that - not counted in LEN. The old code therefore
-always finished reading one byte too early and treated the last data byte
-(an ASCII digit) as a bogus "missing EOB" error, even though the read was
-otherwise 100% correct.
-
-FIX: read_block() expects the EOB right AFTER LEN bytes. A 0x03 before that
-point is data, not the end: block counters and values can be 0x03 (with the
-usual 01/02/03 numbering the ECU's 2nd block has counter 0x03), and stopping
-at the first 0x03 left that byte un-echoed and killed the session. If the
-byte at the expected EOB position isn't 0x03, it keeps reading (and echoing)
-until it sees one, bounded by a safety cap (LEN + BLOCK_SLACK) so a truly
-desynced bus still times out instead of reading forever.
+LEN HANDLING (corrected 22 Sep 2026 from a raw ESP32 trace on the real ECU):
+LEN counts COUNTER+TYPE+DATA+EOB - the standard convention. Block 1 is
+  0D | 01 F6 "8744021620" 03        (13 = 1 + 1 + 10 + 1)
+and the ECU always sends the LEN byte of its FIRST block twice, because it
+doesn't accept the tester's first echo of it. An older version of this tool
+stored that repeat as data, which made it look as if "the EOB arrives one
+byte after LEN" - that conclusion was wrong. read_block() now:
+  * echoes a repeated LEN again without storing it (MAX_LEN_REPEATS),
+  * expects the EOB right after LEN-1 bytes; a 0x03 before that point is
+    data (counters and values can be 0x03) and is echoed like any byte,
+  * falls back to scanning for 0x03 up to LEN + BLOCK_SLACK bytes.
+Every echo and every byte of a sent block waits --echo-delay-ms first (the
+real ECU rejects an echo sent within ~0 ms; 10-30 ms all work).
 
 ALSO ADDED: a full raw trace mode (--raw-trace, on by default) that records
 every single byte read from the wire with a timestamp and a tag (RAW / OWN
@@ -61,8 +55,8 @@ THE HANDSHAKE (as implemented)
 4. INFO BLK - The ECU then sends its hardware ID (reversed), firmware ID (reversed) etc.
              in small "blocks" ending with EOB 0x03.
 5. PACKETS  - Every block looks like:  [LEN] [COUNTER] [TYPE/data ...] [0x03]
-             LEN = number of COUNTER+TYPE+DATA bytes that follow (CONFIRMED: does NOT
-             include the trailing EOB byte itself - see fix note above).
+             LEN = number of bytes that follow, INCLUDING the trailing 0x03
+             (confirmed on the real ECU - see LEN HANDLING above).
              COUNTER increments by one per message (mod 256).
              KWP71 is half-duplex and lock-step: whoever receives a byte echoes it back
              INVERTED, one byte at a time.  Only the final 0x03 is not echoed.
@@ -119,10 +113,10 @@ MOTRONIC = 0x10      # ECU address used for the 5-baud wakeup (Motronic engine E
 BAUDS    = [4800, 9600, 10400]
 MAX_BLOCK_LEN = 64   # sanity cap on the LEN byte of an ECU block
 BLOCK_SLACK = 4      # extra bytes allowed past LEN before giving up looking for EOB
-                     # (confirmed needed: real EOB arrives 1 byte after LEN's count)
-ECU_LEN_INCLUDES_EOB = False  # False = confirmed on this ECU: LEN counts COUNTER+TYPE+DATA,
-                              # the 0x03 comes after them. True = standard KW1281-style
-                              # LEN that also counts the 0x03.
+ECU_LEN_INCLUDES_EOB = True   # True = confirmed on this ECU (raw trace, 22 Sep 2026): LEN counts
+                              # COUNTER+TYPE+DATA+EOB. False = LEN excludes the 0x03.
+MAX_LEN_REPEATS = 3  # how often the ECU may re-send a block's LEN byte because it didn't
+                     # accept our echo (it always does this once, for its first block)
 
 # known read requests (data carried inside the packet after [LEN][COUNTER]).
 # From the public kaihara/kwp71scan reverse engineering of the Alfa 155 Motronic.
@@ -361,7 +355,8 @@ class KWP71:
     def __init__(self, tr, args):
         self.tr = tr
         self.args = args
-        self.counter = 1            # message counter, starts at 1
+        self.counter = 0            # counter of the last block on the bus; the ECU's
+                                    # first block is 01, our ACK to it 02, ...
         self.dump_on = True
 
     # ---- low level
@@ -376,6 +371,11 @@ class KWP71:
     def log(self, msg):
         if self.dump_on:
             print("  " + msg)
+
+    def echo(self, b: int):
+        """Send the inverted echo of a received byte, after --echo-delay-ms."""
+        time.sleep(self.args.echo_delay_ms / 1000.0)
+        self.tx(comp(bytes([b])))
 
     # ---- block receive.  LEN decides where the block ends: on this ECU LEN
     #      covers COUNTER+TYPE+DATA only and EOB arrives as one extra byte on
@@ -393,27 +393,39 @@ class KWP71:
             TRACE.dump("(no LEN byte)")
             return b""
         length = b
-        self.log("  [DEBUG] Received Block Length (LEN): 0x%02X (%d bytes) - "
-                  "note: EOB is expected AFTER these, not counted in LEN" % (length, length))
+        self.log("  [DEBUG] Received Block Length (LEN): 0x%02X (%d bytes)" % (length, length))
         if length == 0 or length > MAX_BLOCK_LEN:
             print("  [DEBUG] !! implausible block length 0x%02X (bus out of sync?)" % length)
             TRACE.dump("(implausible LEN)")
             return b""
-        if self.args.turnaround_ms and echo:
-            time.sleep(self.args.turnaround_ms / 1000.0)
-            self.tx(comp(bytes([b])))
+        if echo:
+            self.echo(b)
 
         # number of COUNTER+TYPE+DATA bytes before the EOB
         body_len = length - 1 if ECU_LEN_INCLUDES_EOB else length
+        expected_ctr = (self.counter + 1) & 0xFF
+        repeats = 0
         data = bytearray()
         max_reads = length + BLOCK_SLACK
-        for i in range(max_reads):
+        i = 0
+        while i < max_reads:
+            i += 1
             bb = self.tr.read_byte(timeout, tag="block byte")
             if bb is None:
                 print("  [DEBUG] !! timeout mid-block (read %d bytes so far, EOB expected after %d)"
                       % (len(data), body_len))
                 TRACE.dump("(timeout mid-block)")
                 return b""
+            # The ECU re-sends LEN when it didn't accept our echo of it (always
+            # once for its first block). Echo the repeat, don't store it. A LEN
+            # value that equals the expected counter is taken as the counter.
+            if not data and bb == length and bb != expected_ctr and repeats < MAX_LEN_REPEATS:
+                repeats += 1
+                i -= 1
+                self.log("  [DEBUG] ECU repeated LEN 0x%02X (didn't accept our echo) - echoing again" % bb)
+                if echo:
+                    self.echo(bb)
+                continue
             if bb == EOB and len(data) >= body_len:
                 # EOB reached - protocol says do NOT echo it, stop here.
                 data.append(bb)
@@ -429,7 +441,7 @@ class KWP71:
                          % (body_len, length, bb))
             data.append(bb)
             if echo:
-                self.tx(comp(bytes([bb])))
+                self.echo(bb)
         else:
             # Safety cap hit without ever seeing EOB - genuine desync.
             print("  [DEBUG] !! never saw EOB (0x03) within %d bytes after LEN=0x%02X: %s"
@@ -448,6 +460,8 @@ class KWP71:
             self.log("  [DEBUG] Reversed-ASCII guess for payload: '%s'" % ascii_guess)
 
         if len(data) >= 2:
+            if data[0] != expected_ctr:
+                self.log("  [DEBUG] note: ECU counter 0x%02X, expected 0x%02X" % (data[0], expected_ctr))
             self.counter = data[0]
             self.log("  [DEBUG] Updated message counter from ECU: 0x%02X" % self.counter)
         return bytes(data)
@@ -463,6 +477,7 @@ class KWP71:
             # write_byte_sync writes the byte and immediately consumes its own
             # physical self-echo loopback - this is ALWAYS present regardless
             # of whether the ECU also sends a protocol-level echo.
+            time.sleep(self.args.echo_delay_ms / 1000.0)
             self.tr.write_byte_sync(b)
             if not (expect_echo and i != len(block) - 1):
                 # Final byte (EOB): ECU never echoes it per protocol; the
@@ -787,7 +802,11 @@ def main():
     ap.add_argument("--sync-timeout", type=float, default=0.8)
     ap.add_argument("--sync-tries", type=int, default=3)
     ap.add_argument("--byte-timeout", type=float, default=0.15)
-    ap.add_argument("--turnaround-ms", type=int, default=8)
+    ap.add_argument("--turnaround-ms", type=int, default=8,
+                    help="delay before the keyword reply (0x79)")
+    ap.add_argument("--echo-delay-ms", type=int, default=10,
+                    help="delay before every echo and every byte of a sent block "
+                         "(real ECU: 0 ms rejected, 10-30 ms work)")
     ap.add_argument("--no-echo", action="store_true", default=False)
     ap.add_argument("--probe", action="store_true")
     ap.add_argument("--raw-trace", action="store_true", default=True,

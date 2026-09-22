@@ -1,6 +1,6 @@
 # Alfa 145 QV KWP71 reader: ESP32 CYD + ISO 9141 Click
 
-Reads a **Bosch Motronic M2.10.4** (Alfa Romeo 145 QV, part 0261204478) over the K-line with the old Bosch **KWP71** protocol. It runs on an **ESP32-2432S028 "Cheap Yellow Display"** with a **MikroE ISO 9141 Click**, and shows a live dashboard on the CYD's screen: an rpm gauge, battery, coolant, and the ECU ID numbers.
+Reads a **Bosch Motronic M2.10.4** (Alfa Romeo 145 QV, part 0261204478) over the K-line with the old Bosch **KWP71** protocol. It runs on an **ESP32-2432S028 "Cheap Yellow Display"** with a **MikroE ISO 9141 Click**, and shows a live dashboard on the CYD's screen: an rpm gauge, four values (battery, coolant, air temp, air quantity), the ECU ID numbers, and a boot splash with the car badge.
 
 **Status (22 Sep 2026):** the full handshake and live values work on the real ECU (bench, engine off). The ESP32 reads 12.27 V, 18 °C and 0 rpm, plus the ID blocks: HW 0261204478, SW 1037357941, PN 46525168. The smoother dashboard (rpm polled ~3–4×/s, display on the second core) compiles but hasn't been tested on the ECU yet.
 
@@ -46,6 +46,15 @@ The CYD's CH340 USB chip drops out at the default 921600 baud, hence `UploadSpee
 
 `#define DEMO_MODE 1` shows simulated values without an ECU. Set it to `0` for the car.
 
+The Alfa badge on the boot splash and in the status bar comes from an image that isn't in this repository, since car maker logos are trademarks. To show it, put your own `logo.png` in the project root and run:
+
+```sh
+pip install pillow
+python3 tools/make_logo_header.py logo.png
+```
+
+Without that header the sketch still builds: the splash is then text-only.
+
 ## PC tools
 
 ```sh
@@ -75,8 +84,8 @@ Only one tester may be on the K-line at a time: unplug the KKL when the Click is
 ## Open items
 
 - RPM formula and a second battery calibration point, with the engine running.
-- `tools/kwp71_m2_10_4.py` and `tools/m2104_sim.py` still assume that LEN excludes the 0x03, and don't handle the repeated LEN byte.
 - The first request after the handshake always gets a NAK. It's harmless, but a short pause might avoid it.
+- Air temperature and air quantity have display cells but aren't requested from the ECU yet (air temp is probably ADC channel 02; the air quantity address is unknown).
 
 ## License
 
