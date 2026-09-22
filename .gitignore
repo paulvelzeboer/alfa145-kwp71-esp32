@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Logs and editor leftovers
+*.log
+
+# Arduino / arduino-cli build output
+build/
+
+# 6.7 MB capture without a time column (from before check_wakeup.py was fixed)
+captures/wakeup_capture.csv
