@@ -77,3 +77,7 @@ Only one tester may be on the K-line at a time: unplug the KKL when the Click is
 - RPM formula and a second battery calibration point, with the engine running.
 - `tools/kwp71_m2_10_4.py` and `tools/m2104_sim.py` still assume that LEN excludes the 0x03, and don't handle the repeated LEN byte.
 - The first request after the handshake always gets a NAK. It's harmless, but a short pause might avoid it.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
