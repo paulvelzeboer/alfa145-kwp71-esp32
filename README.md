@@ -15,8 +15,12 @@ The full bring-up story, wiring, protocol findings and troubleshooting are in **
 | `tools/kwp71_m2_10_4.py` | PC tool: KWP71 over a KKL / VAG-COM 409.1 cable (`--probe` for wakeup + sync only) |
 | `tools/m2104_sim.py` | M2.10.4 simulator: the PC + KKL cable plays the ECU for desk testing |
 | `tools/check_wakeup.py` | Decodes the 5-baud 0x10 wakeup from a sigrok CSV capture |
+| `tools/make_case.py` | Generates the case (STL + 3MF) from the dimensions at the top of the file |
+| `tools/trace_badge.py` | Traces a badge image into outlines for the lid |
+| `tools/make_logo_header.py` | Converts a logo image into display data for the sketch |
 | `docs/kwp71-m2104-bringup.md` | Documentation: bring-up plan, results, dashboard, troubleshooting |
 | `captures/` | Logic analyzer captures (the existing ones show no K-line activity; see the doc, P0) |
+| `hardware/` | Printable case for the CYD + Click: STL files plus `case_lid.3mf` for multi-colour printing, see [hardware/README.md](hardware/README.md) |
 | `archive/` | Older sketch version and an old KKL tool log, for reference only |
 
 ## Hardware and wiring
@@ -81,11 +85,22 @@ Only one tester may be on the K-line at a time: unplug the KKL when the Click is
 | Coolant | `08 03` → FB + 2 bytes, polynomial on the low byte |
 | RPM | `01 02 00 3B` → FE + 2 bytes; formula **not verified** with a running engine |
 
+## 3D-printed case
+
+`hardware/` holds a two-part case: a shell with posts for the CYD and a slide-in holder for the Click, and a lid with a window for the display and the quadrifoglio inlaid in its top layers. Regenerate after changing any dimension:
+
+```sh
+python3 tools/make_case.py
+```
+
+Print `case_clickfit.stl` and `case_fitcheck.stl` first; they check the fit in minutes. Details and print settings are in [hardware/README.md](hardware/README.md).
+
 ## Open items
 
 - RPM formula and a second battery calibration point, with the engine running.
 - The first request after the handshake always gets a NAK. It's harmless, but a short pause might avoid it.
 - Air temperature and air quantity have display cells but aren't requested from the ECU yet (air temp is probably ADC channel 02; the air quantity address is unknown).
+- The case is unprinted apart from the Click holder coupon. The terminal height under the Click (7.0 mm) and the pin height above it (8.0 mm) are estimates, and they set the case height.
 
 ## License
 

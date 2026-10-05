@@ -1,6 +1,6 @@
 # ESP32 CYD → ISO 9141 Click → Bosch M2.10.4: KWP71 bring-up plan
 
-Sep 21, 2026 · @Someone
+Sep 21, 2026 · @Paul
 
 ## Goal and starting point
 
@@ -464,6 +464,47 @@ Set `#define DEMO_MODE 1` and upload to check the screen without an ECU.
 - **Screen:** shows the ECU's real ID numbers, and the status says **DEMO**.
 
 Values are fed every 300 ms, about the real update rate, so it also shows how the smoothing will look. Set it back to `0` for the ECU; in demo mode the ESP32 never touches the K-line.
+
+## 3D-printed case
+
+`tools/make_case.py` generates the case as STL and 3MF files into `hardware/`. Every dimension is a named parameter at the top of that script, so a measurement that turns out wrong is one number and a re-run. Nothing has been printed yet except the Click holder coupon.
+
+| File | What | Size |
+| --- | --- | --- |
+| `case_clickfit.stl` | Coupon with just the Click holder. **Confirmed to fit on 5 Oct 2026** | 37 × 39 × 13.9 mm |
+| `case_fitcheck.stl` | Coupon with the CYD hole pattern, short posts | 122 × 56 × 7.8 mm |
+| `case_bottom.stl` | Shell: floor, walls, CYD posts, Click holder | 127.2 × 60.8 × 21.1 mm |
+| `case_lid.3mf` | Lid + badge as one object in three parts, for multi-colour printing | 127.2 × 60.8 × 8 mm |
+| `case_lid.stl`, `case_lid_badge_*.stl` | The same three parts separately |  |
+| `case_lid_embossed.stl` | Lid with the badge raised 1.4 mm, for one colour | 127.2 × 60.8 × 9.4 mm |
+
+### What the measurements come from
+
+- **CYD outline and holes** from the [manufacturer drawing](https://mischianti.org/wp-content/uploads/2025/04/ESP32-2432S028-Cheap-Yellow-Display-Dimensions.jpg.webp): board 86.0 × 50.0 mm, hole centres 4.0 mm in from each edge, so the pattern is 78 × 42 mm. Posts carry a 2.7 mm pin that enters the board hole.
+- **ISO 9141 Click** from its DXF (`iso_9141_click_v101.dxf`): outline 25.40 × 28.57 mm, two 8-pin headers 22.86 mm apart (1.27 mm from the long edges), pins running 3.81–21.59 mm along the board.
+- **Still estimated:** the CYD's hole diameter (3.0 mm), where the display's active area sits on the board, the terminal height under the Click (`CLICK_TERM_STACK` = 7.0 mm) and the pin height above it (`CLICK_PIN_H` = 8.0 mm). The last two set the whole case height — measure them.
+
+### The Click holder
+
+The Click's own mounting holes aren't usable, and its headers sit only 1.27 mm from the long edges, so nothing may grip those edges: a rail there rides over the pins while the board slides in. Instead:
+
+- **A pocket at the back edge** takes the last 3 mm of the board, past the final pin.
+- **Two ledges** support the front corners from below, clear of the screw terminals in the middle, with ramped snap nubs on top that also clear both pin columns.
+- **The board sits 8.5 mm above the floor**, the terminals hanging underneath, **pins up**. Wire the terminals, slide the back edge into the pocket, press the front down until it snaps.
+
+### Case and lid
+
+- **The Click's pins set the inner height** (19.1 mm), because the lid is closed over the Click. The CYD posts are then derived, 11.5 mm, so the display ends up 2 mm under the lid instead of down a well.
+- **One opening only:** the Click's terminal wires, in the front wall. Every other wall is solid — no USB cut-out, and nothing behind the CYD where its micro-SD slot sits.
+- **The lid drops on with a 6 mm lip**, 0.3 mm clearance, no screws.
+
+### The badge
+
+The quadrifoglio is **traced from an image** by `tools/trace_badge.py`: green pixels and the outline around them become the clover, the remaining grey becomes the triangle, filled solid. It writes `tools/badge_data.py`, which the case generator picks up automatically; without it the generator falls back to a clover drawn from curves, so the files still build.
+
+The badge is **inlaid, not raised**: lid, triangle and clover all end flush at the lid surface, with the colours filling the top 0.6 mm. The parts overlap on purpose, since slicers give an overlap to the part listed last, so the clover comes after the triangle.
+
+**Not in the repository:** `clover.png`, `logo.png` and the generated data files are trademarked artwork and are in `.gitignore`.
 
 ## Troubleshooting
 

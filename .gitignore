@@ -19,3 +19,5 @@ captures/wakeup_capture.csv
 # locally from your own image: python3 tools/make_logo_header.py logo.png
 logo.png
 firmware/kwp71_m2104_esp32/logo_data.h
+clover.png
+tools/badge_data.py

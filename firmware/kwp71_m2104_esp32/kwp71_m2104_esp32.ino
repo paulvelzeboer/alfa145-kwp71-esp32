@@ -76,7 +76,7 @@ TFT_eSPI tft = TFT_eSPI();
 // values (rpm sweeping into the red zone, battery, coolant warming up) so
 // the screen can be checked without an ECU. Status bar shows "DEMO".
 // Set to 0 for the real ECU.
-#define DEMO_MODE 1
+#define DEMO_MODE 0
 
 #define ECU_ADDRESS   0x10   // Motronic engine ECU - CONFIRMED working
 #define COMM_BAUD     4800
