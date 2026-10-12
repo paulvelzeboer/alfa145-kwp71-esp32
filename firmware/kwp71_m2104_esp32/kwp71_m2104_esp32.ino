@@ -171,30 +171,45 @@ unsigned long selfEchoErrors = 0; // bytes whose loopback was missing or wrong
 #define COL_LABEL   0x9CD3      // light grey labels
 #define COL_REDZONE 0x6000      // dark red track in the red zone
 
-#define G_CX   84               // gauge centre
-#define G_CY   128
-#define G_R    72               // outer radius
-#define G_W    12               // ring thickness
+// L-shaped rpm bar, wrapping the value cells: it runs along the bottom edge
+// for 0..RPM_MID, turns at the bottom-right corner, and climbs the right edge
+// for RPM_MID..RPM_MAX. Each leg carries half the range, so the corner is
+// always the halfway mark - the bottom leg is longer, so the lower half of the
+// range reads finer than the upper half. The scale labels make the split clear.
+#define G_W      14             // bar thickness
+#define G_BX0    6              // bottom leg: left end, 0 rpm
+#define G_BX1    314            // bottom leg: right end, the corner
+#define G_BY     190            // bottom leg: top edge
+#define G_VX     300            // side leg: left edge (G_BX1 - G_W)
+#define G_VY0    190            // side leg: bottom, the corner (= G_BY)
+#define G_VY1    30             // side leg: top, RPM_MAX
 
-// 2 x 2 value grid on the right: 0 = battery, 1 = coolant, 2 = air temp, 3 = air qty
-#define PANEL_X  164
+// The big rpm number sits left of the cells, in the space the dial used to fill.
+#define RPM_CX   67
+#define RPM_CY   108
+
+// 2 x 2 value grid, inside the L: 0 = battery, 1 = coolant, 2 = air temp, 3 = air qty
+#define PANEL_X  134
 #define PANEL_Y  30
 #define CELL_W   74
-#define CELL_H   84
+#define CELL_H   76
 #define CELL_GAP 4
 #define CELL_BATT 0
 #define CELL_COOL 1
 #define CELL_AIRT 2
 #define CELL_AIRQ 3
-#define G_A0   60               // TFT_eSPI arc angles: 0 = 6 o'clock, clockwise
-#define G_A1   300              // 60..300 = 240 degree sweep over the top
 #define RPM_MAX   8000
+#define RPM_MID   (RPM_MAX / 2) // rpm at the corner, where the bar turns
 #define RPM_WARN  5000          // yellow from here
 #define RPM_RED   6500          // red from here
 
 bool dashReady = false;
-int gaugeAngle = G_A0;          // current end of the coloured bar
+int gaugeBottom = 0;            // drawn length of each leg, in pixels
+int gaugeSide = 0;
 uint16_t gaugeColor = TFT_GREEN;
+bool gaugeFullRepaint = false;  // gaugeSet() repainted both legs, so the
+                                // overlays drawn on top of them are gone
+int tachoX = 0, tachoY = 0;     // where dashFrame() put the rpm dial
 String idHw, idSw, idPn;        // from the ECU's ID blocks
 
 // ---- Shared state between the K-line code (loop, core 1) and the display
@@ -211,9 +226,24 @@ SemaphoreHandle_t dashMutex = NULL;
 String   shStatus = "STARTING";
 uint16_t shStatusCol = TFT_YELLOW;
 bool     shStatusDirty = true;
+bool     shStatusPulse = true;  // breathe the dot until the session is up
 String   shBottom = "";
 uint16_t shBottomCol = COL_LABEL;
 bool     shBottomDirty = false;
+
+// Animation. All of it runs in the display task on core 0, so none of it can
+// delay a K-line echo.
+#define BOOT_SWEEP_STEPS 28     // cluster-style self-test sweep after the splash
+#define BOOT_SWEEP_MS    20     // ~0.6 s each way
+#define PEAK_HOLD_MS     1200   // how long the peak tick waits before sliding back
+#define PEAK_FALL        40     // rpm per frame once it slides (~1000 rpm/s)
+#define PEAK_MIN_GAP     120    // hide the tick this close to the bar's own tip
+#define PEAK_W           3      // tick thickness
+#define SHIFT_BLINK_MS   125    // shift light: one phase, so ~4 Hz
+#define SHIFT_W          16     // length of the blinking stretch at the bar's tip
+#define SHIFT_TEXT       "Shift!"   // blinks in the top bar past RPM_RED
+#define DOT_PULSE_MS     1400   // breathing period of the status dot
+#define FLASH_FRAMES     8      // frames a cell title stays lit after a new value
 
 #define SPLASH_MS       5000    // how long the boot splash stays on screen
 #define DASH_FRAME_MS   40      // ~25 frames per second
@@ -222,36 +252,147 @@ bool     shBottomDirty = false;
                                 // Lower = smoother but lags more; 0.30 was the
                                 // first setting and looked slightly too twitchy.
 
-int rpmToAngle(int rpm) {
-  if (rpm < 0) rpm = 0;
-  if (rpm > RPM_MAX) rpm = RPM_MAX;
-  return G_A0 + (long)rpm * (G_A1 - G_A0) / RPM_MAX;
-}
-
 uint16_t rpmColor(int rpm) {
   return rpm >= RPM_RED ? TFT_RED : rpm >= RPM_WARN ? TFT_YELLOW : TFT_GREEN;
 }
 
-// Draws the empty track between two angles (grey, dark red in the red zone).
-void gaugeTrack(int a, int b) {
-  int aRed = rpmToAngle(RPM_RED);
-  if (a < aRed) tft.drawArc(G_CX, G_CY, G_R, G_R - G_W, a, min(b, aRed), COL_FRAME, COL_BG, true);
-  if (b > aRed) tft.drawArc(G_CX, G_CY, G_R, G_R - G_W, max(a, aRed), b, COL_REDZONE, COL_BG, true);
+// How far along each leg an rpm reaches, in pixels. Below RPM_MID only the
+// bottom leg moves; above it the bottom leg stays full and the side leg grows.
+int rpmBottomLen(int rpm) {
+  if (rpm <= 0) return 0;
+  if (rpm >= RPM_MID) return G_BX1 - G_BX0;
+  return (long)rpm * (G_BX1 - G_BX0) / RPM_MID;
+}
+
+int rpmSideLen(int rpm) {
+  if (rpm <= RPM_MID) return 0;
+  if (rpm >= RPM_MAX) return G_VY0 - G_VY1;
+  return (long)(rpm - RPM_MID) * (G_VY0 - G_VY1) / (RPM_MAX - RPM_MID);
+}
+
+// Screen y of an rpm on the side leg. The leg climbs, so a higher rpm is a
+// SMALLER y - worth remembering when reading the track code below.
+int sideY(int rpm) { return G_VY0 - rpmSideLen(rpm); }
+
+// The empty track: grey, turning dark red past RPM_RED, as the ring did.
+void trackBottom(int x0, int x1) {
+  if (x1 > x0) tft.fillRect(x0, G_BY, x1 - x0, G_W, COL_FRAME);
+}
+
+void trackSide(int yTop, int yBot) {
+  int yRed = sideY(RPM_RED);
+  if (yTop < yRed) {                          // above the red line
+    int b = min(yBot, yRed);
+    if (b > yTop) tft.fillRect(G_VX, yTop, G_W, b - yTop, COL_REDZONE);
+  }
+  if (yBot > yRed) {
+    int t = max(yTop, yRed);
+    if (yBot > t) tft.fillRect(G_VX, t, G_W, yBot - t, COL_FRAME);
+  }
 }
 
 void gaugeSet(int rpm) {
-  int a = rpmToAngle(rpm);
+  int nb = rpmBottomLen(rpm), ns = rpmSideLen(rpm);
   uint16_t col = rpmColor(rpm);
-  if (col != gaugeColor) {                    // zone changed: repaint the whole bar
-    if (a > G_A0) tft.drawArc(G_CX, G_CY, G_R, G_R - G_W, G_A0, a, col, COL_BG, true);
-    if (a < G_A1) gaugeTrack(a, G_A1);
-  } else if (a > gaugeAngle) {                // grow
-    tft.drawArc(G_CX, G_CY, G_R, G_R - G_W, gaugeAngle, a, col, COL_BG, true);
-  } else if (a < gaugeAngle) {                // shrink
-    gaugeTrack(a, gaugeAngle);
+  if (col != gaugeColor) {                    // zone changed: repaint both legs
+    if (nb) tft.fillRect(G_BX0, G_BY, nb, G_W, col);
+    trackBottom(G_BX0 + nb, G_BX1);
+    if (ns) tft.fillRect(G_VX, G_VY0 - ns, G_W, ns, col);
+    trackSide(G_VY1, G_VY0 - ns);
+  } else {                                    // only the changed stretch
+    if (nb > gaugeBottom) tft.fillRect(G_BX0 + gaugeBottom, G_BY, nb - gaugeBottom, G_W, col);
+    else if (nb < gaugeBottom) trackBottom(G_BX0 + nb, G_BX0 + gaugeBottom);
+    if (ns > gaugeSide) tft.fillRect(G_VX, G_VY0 - ns, G_W, ns - gaugeSide, col);
+    else if (ns < gaugeSide) trackSide(G_VY0 - gaugeSide, G_VY0 - ns);
   }
-  gaugeAngle = a;
+  gaugeBottom = nb;
+  gaugeSide = ns;
   gaugeColor = col;
+}
+
+// Blend two RGB565 colours; f = 0 gives a, f = 255 gives b. Used for the
+// breathing dot and the fading cell titles.
+uint16_t blend565(uint16_t a, uint16_t b, uint8_t f) {
+  int ra = (a >> 11) & 0x1F, ga = (a >> 5) & 0x3F, ba = a & 0x1F;
+  int rb = (b >> 11) & 0x1F, gb = (b >> 5) & 0x3F, bb = b & 0x1F;
+  return (uint16_t)(((ra + (rb - ra) * f / 255) << 11) |
+                    ((ga + (gb - ga) * f / 255) << 5) |
+                     (ba + (bb - ba) * f / 255));
+}
+
+// Repaints a thin slice of one leg, for when an overlay moves off a spot:
+// bar colour below the current reading, track colour above it. `pos` is pixels
+// from the leg's zero end (left on the bottom leg, the corner on the side leg).
+void gaugeSlice(bool side, int pos, int len) {
+  if (!side) {
+    int x0 = G_BX0 + pos, x1 = min(x0 + len, G_BX1);
+    int edge = G_BX0 + gaugeBottom;                  // bar ends here
+    if (x0 < edge) tft.fillRect(x0, G_BY, min(x1, edge) - x0, G_W, gaugeColor);
+    if (x1 > edge) trackBottom(max(x0, edge), x1);
+  } else {
+    int yb = G_VY0 - pos, yt = max(yb - len, G_VY1);
+    int edge = G_VY0 - gaugeSide;                    // bar ends here (smaller y)
+    if (yb > edge) {
+      int t = max(yt, edge);
+      if (yb > t) tft.fillRect(G_VX, t, G_W, yb - t, gaugeColor);
+    }
+    if (yt < edge) trackSide(yt, min(yb, edge));
+  }
+}
+
+// ---- Shift light: above RPM_RED the stretch at the bar's tip is blanked to
+// the background on alternate phases, so the red bar looks like it is pulsing
+// shorter. Nothing on screen goes white past the red line - the colour stays
+// red throughout, which is why this blanks rather than overpaints.
+bool shiftOn = false, shiftSide = false;
+int  shiftPos = 0, shiftLen = 0;
+
+void shiftLight(int rpm, bool force) {
+  bool want = rpm >= RPM_RED && (millis() / SHIFT_BLINK_MS) % 2;
+  bool side = rpm > RPM_MID;
+  int filled = side ? rpmSideLen(rpm) : rpmBottomLen(rpm);
+  int pos = max(filled - SHIFT_W, 0), len = filled - pos;
+  if (!force && want == shiftOn && (!want || (side == shiftSide && pos == shiftPos)))
+    return;
+  if (shiftOn && !force) gaugeSlice(shiftSide, shiftPos, shiftLen);
+  if (want && len > 0) {
+    if (side) tft.fillRect(G_VX, G_VY0 - pos - len, G_W, len, COL_BG);
+    else      tft.fillRect(G_BX0 + pos, G_BY, len, G_W, COL_BG);
+  }
+  shiftOn = want; shiftSide = side; shiftPos = pos; shiftLen = len;
+}
+
+// ---- Peak hold: a steady white tick rides at the highest rpm of the last
+// PEAK_HOLD_MS, then slides back down to the bar. White and never blinking, on
+// purpose: the blinking tip means "you are in the red zone", this means "this
+// is the speed you actually hit", and keeping them visually distinct is what
+// lets you read the two apart. It hides itself while it would sit on the bar's
+// own tip, where it would only fight the shift light.
+int  peakRpm = 0;
+unsigned long peakAt = 0;
+bool peakShown = false, peakSide = false;
+int  peakPos = 0;
+
+void peakMarker(int rpm, bool force) {
+  unsigned long now = millis();
+  if (rpm > peakRpm) {
+    peakRpm = rpm;
+    peakAt = now;
+  } else if (now - peakAt > PEAK_HOLD_MS) {
+    peakRpm = max(peakRpm - PEAK_FALL, rpm);
+  }
+  bool want = peakRpm - rpm >= PEAK_MIN_GAP;
+  bool side = peakRpm > RPM_MID;
+  int span = side ? G_VY0 - G_VY1 : G_BX1 - G_BX0;
+  int pos = min(side ? rpmSideLen(peakRpm) : rpmBottomLen(peakRpm), span - PEAK_W);
+  if (!force && want == peakShown && (!want || (side == peakSide && pos == peakPos)))
+    return;
+  if (peakShown && !force) gaugeSlice(peakSide, peakPos, PEAK_W);
+  if (want) {
+    if (side) tft.fillRect(G_VX, G_VY0 - pos - PEAK_W, G_W, PEAK_W, TFT_WHITE);
+    else      tft.fillRect(G_BX0 + pos, G_BY, PEAK_W, G_W, TFT_WHITE);
+  }
+  peakShown = want; peakSide = side; peakPos = pos;
 }
 
 void drawSplash() {
@@ -274,6 +415,90 @@ void drawSplash() {
 int cellX(int i) { return PANEL_X + (i % 2) * (CELL_W + CELL_GAP); }
 int cellY(int i) { return PANEL_Y + (i / 2) * (CELL_H + CELL_GAP); }
 
+// One symbol per cell, drawn from primitives in an ICON_W x ICON_H box with
+// its top-left at (x, y). Each is painted in its own value's colour, so every
+// cell doubles as a warning lamp: blue when cold, green when normal, red when
+// out of range.
+#define ICON_W 17
+#define ICON_H 13
+
+// Tachometer: a dial with a needle, for the rpm block.
+void drawTachoIcon(int x, int y, uint16_t col) {
+  int cx = x + 8, cy = y + 6;
+  tft.drawCircle(cx, cy, 6, col);
+  tft.drawLine(cx, cy, cx + 4, cy - 4, col);       // needle, up and to the right
+  tft.fillCircle(cx, cy, 1, col);
+}
+
+// Stem and bulb, shared by the two temperatures.
+void drawThermometer(int x, int y, uint16_t col) {
+  int cx = x + 8;
+  tft.fillRoundRect(cx - 2, y, 4, 7, 1, col);
+  tft.fillCircle(cx, y + 8, 3, col);
+}
+
+// Coolant: a thermometer standing in water.
+void drawCoolantIcon(int x, int y, uint16_t col) {
+  drawThermometer(x, y, col);
+  for (int s = 0; s < 2; s++) {                    // a wave either side
+    int x0 = s ? x + 12 : x;
+    tft.drawLine(x0,     y + 8,  x0 + 2, y + 6,  col);
+    tft.drawLine(x0 + 2, y + 6,  x0 + 4, y + 8,  col);
+    tft.drawLine(x0,     y + 11, x0 + 2, y + 9,  col);
+    tft.drawLine(x0 + 2, y + 9,  x0 + 4, y + 11, col);
+  }
+}
+
+// Air temperature: the same thermometer, but in still straight lines instead of
+// waves, so the two temperatures are told apart at a glance.
+void drawAirTempIcon(int x, int y, uint16_t col) {
+  drawThermometer(x, y, col);
+  for (int s = 0; s < 2; s++) {
+    int x0 = s ? x + 12 : x;
+    tft.drawFastHLine(x0, y + 6, 5, col);
+    tft.drawFastHLine(x0 + (s ? 0 : 1), y + 9, 4, col);
+  }
+}
+
+// Battery: case, two terminals, and the + / - marks.
+void drawBatteryIcon(int x, int y, uint16_t col) {
+  tft.drawRect(x + 1, y + 2, 15, 10, col);
+  tft.fillRect(x + 4, y, 3, 2, col);
+  tft.fillRect(x + 10, y, 3, 2, col);
+  tft.drawFastHLine(x + 3, y + 7, 5, col);         // +
+  tft.drawFastVLine(x + 5, y + 5, 5, col);
+  tft.drawFastHLine(x + 10, y + 7, 5, col);        // -
+}
+
+// Air quantity: airflow, three arrows of different lengths.
+void drawFlowIcon(int x, int y, uint16_t col) {
+  const int len[3] = {11, 15, 11};
+  for (int i = 0; i < 3; i++) {
+    int yy = y + 2 + i * 4, x1 = x + 1 + len[i];
+    tft.drawFastHLine(x + 1, yy, len[i], col);
+    tft.drawLine(x1, yy, x1 - 3, yy - 2, col);
+    tft.drawLine(x1, yy, x1 - 3, yy + 2, col);
+  }
+}
+
+// Short titles: the symbol beside each one carries the meaning, and the full
+// words would run into the cell's right edge once the icon takes its 17 px.
+const char *cellTitle(int i) {
+  return i == CELL_BATT ? "BATT" : i == CELL_COOL ? "COOL" :
+         i == CELL_AIRT ? "AIR T" : "AIR Q";
+}
+
+int iconX(int i) { return cellX(i) + 5; }
+int iconY(int i) { return cellY(i) + 4; }
+
+void drawCellIcon(int i, uint16_t col) {
+  int x = iconX(i), y = iconY(i);
+  if (i == CELL_BATT)      drawBatteryIcon(x, y, col);
+  else if (i == CELL_COOL) drawCoolantIcon(x, y, col);
+  else if (i == CELL_AIRT) drawAirTempIcon(x, y, col);
+  else                     drawFlowIcon(x, y, col);
+}
+
 void drawText(const String &txt, int x, int y, uint8_t datum, int font, uint16_t fg,
               uint16_t bg, int padding) {
   tft.setTextDatum(datum);
@@ -281,6 +506,13 @@ void drawText(const String &txt, int x, int y, uint8_t datum, int font, uint16_t
   tft.setTextPadding(padding);
   tft.drawString(txt, x, y, font);
   tft.setTextPadding(0);
+}
+
+// Titles are redrawn on their own to fade the fresh-data cue, so they have one
+// owner rather than being spelled out in dashFrame().
+void drawCellTitle(int i, uint16_t col) {
+  drawText(cellTitle(i), cellX(i) + 5 + ICON_W + 3, cellY(i) + 10, ML_DATUM, 1,
+           col, COL_BG, 0);
 }
 
 // Static parts; called once from setup() before the display task starts.
@@ -296,32 +528,43 @@ void dashFrame() {
   drawText("ALFA 145 QV", 6, 12, ML_DATUM, 2, TFT_WHITE, COL_BAR, 0);
 #endif
 
-  // gauge: track, ticks every 1000 rpm, 0 and 8 under the ends
-  gaugeTrack(G_A0, G_A1);
-  gaugeAngle = G_A0;
+  // L gauge: empty track, then the scale in thousands. The bottom leg is
+  // labelled under the bar, the side leg to its left, so the labels never sit
+  // on top of the cells.
+  trackBottom(G_BX0, G_BX1);
+  trackSide(G_VY1, G_VY0);
+  gaugeBottom = 0;
+  gaugeSide = 0;
   gaugeColor = TFT_GREEN;
-  for (int k = 0; k <= 8; k++) {
-    float a = (G_A0 + k * (G_A1 - G_A0) / 8) * DEG_TO_RAD;
-    float sn = sin(a), cs = cos(a);
-    int r1 = G_R - G_W - 3, r2 = r1 - (k % 2 ? 3 : 6);
-    tft.drawLine(G_CX - r1 * sn, G_CY + r1 * cs, G_CX - r2 * sn, G_CY + r2 * cs,
-                 k * 1000 >= RPM_RED ? TFT_RED : COL_LABEL);
+  peakShown = false;
+  shiftOn = false;
+  peakRpm = 0;
+  for (int k = 0; k <= RPM_MID / 1000; k++) {
+    int x = G_BX0 + k * (G_BX1 - G_BX0) / (RPM_MID / 1000);
+    drawText(String(k), x, G_BY + G_W + 6, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
   }
-  drawText("0", G_CX - 56, G_CY + 48, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("8", G_CX + 56, G_CY + 48, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("rpm", G_CX, G_CY + 36, MC_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("x1000", G_CX, G_CY + 62, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
+  for (int k = RPM_MID / 1000 + 1; k <= RPM_MAX / 1000; k++) {
+    drawText(String(k), G_VX - 4, sideY(k * 1000), MR_DATUM, 1,
+             k * 1000 >= RPM_RED ? TFT_RED : COL_LABEL, COL_BG, 0);
+  }
+  // Dial and "RPM" are centred together as one group, so the pair sits over
+  // the number rather than the text alone.
+  int gw = ICON_W + 4 + tft.textWidth("RPM", 2);
+  tachoX = RPM_CX - gw / 2;
+  tachoY = RPM_CY - 58;
+  drawTachoIcon(tachoX, tachoY, COL_LABEL);
+  drawText("RPM", tachoX + ICON_W + 4, RPM_CY - 52, ML_DATUM, 2, COL_LABEL, COL_BG, 0);
+  drawText("x1000 on the bar", RPM_CX, RPM_CY + 44, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
 
   // 2 x 2 value grid: title (left), unit (right), value in the middle.
   // Units live in the labels so the value line can stay as wide as possible.
   for (int i = 0; i < 4; i++) {
     int x = cellX(i), y = cellY(i);
     tft.drawRoundRect(x, y, CELL_W, CELL_H, 5, COL_FRAME);
-    const char *title = i == CELL_BATT ? "BATTERY" : i == CELL_COOL ? "COOLANT" :
-                        i == CELL_AIRT ? "AIR TEMP" : "AIR QTY";
     // Titles in the small font (font 1): font 2 was too wide for a 74 px cell,
     // so "AIR TEMP" + unit didn't line up with the others.
-    drawText(title, x + 5, y + 10, ML_DATUM, 1, COL_LABEL, COL_BG, 0);
+    drawCellTitle(i, COL_LABEL);
+    drawCellIcon(i, COL_LABEL);
     // Unit on its own line under the title, centred over the value.
     int ux = x + CELL_W / 2;
     if (i == CELL_BATT) {
@@ -343,6 +586,9 @@ void dashStatus(const String &txt, uint16_t color) {
   if (!dashMutex) return;
   xSemaphoreTake(dashMutex, portMAX_DELAY);
   shStatus = txt; shStatusCol = color; shStatusDirty = true;
+  // A steady dot means the session is up; everything else breathes, so a
+  // stalled handshake never looks like a working one.
+  shStatusPulse = !(txt == "CONNECTED" || txt == "DEMO");
   xSemaphoreGive(dashMutex);
 }
 
@@ -367,7 +613,7 @@ void dashValues(float battV, int rpm, float coolantC, float airT, float airQ) {
 }
 
 void drawCell(int i, const String &txt, uint16_t color) {
-  drawText(txt, cellX(i) + CELL_W / 2, cellY(i) + 58, MC_DATUM, 4, color, COL_BG, CELL_W - 8);
+  drawText(txt, cellX(i) + CELL_W / 2, cellY(i) + 54, MC_DATUM, 4, color, COL_BG, CELL_W - 8);
 }
 
 // ---- Display task (core 0): the only code that draws after setup().
@@ -377,20 +623,53 @@ void dashTask(void *param) {
   float shownRpm = 0;
   int drawnRpm = -2;            // -2 = nothing drawn yet, -1 = "--" drawn
   float drawnBatt = -2, drawnCool = -2, drawnAirT = -2, drawnAirQ = -2;
+  int cellFlash[4] = {0, 0, 0, 0};
+  int dotX = 0;                 // status dot, remembered so it can breathe
+  uint16_t dotCol = 0;
+  bool dotPulse = false;
+  bool shiftTextOn = false;     // "Shift!" currently painted in the top bar
+  uint16_t drawnTacho = COL_LABEL;
+
+  // Self-test sweep, the way a cluster wakes up: run the bar to the top and
+  // back once. It also proves both legs and the red zone draw before any data
+  // arrives. The number follows it, then the first real reading overwrites it.
+  for (int i = 0; i <= 2 * BOOT_SWEEP_STEPS; i++) {
+    int step = i <= BOOT_SWEEP_STEPS ? i : 2 * BOOT_SWEEP_STEPS - i;
+    int r = (long)RPM_MAX * step / BOOT_SWEEP_STEPS;
+    gaugeSet(r);
+    gaugeFullRepaint = false;   // no overlays during the sweep
+    drawText(String(r / 10 * 10), RPM_CX, RPM_CY, MC_DATUM, 6, TFT_WHITE, COL_BG,
+             tft.textWidth("8888", 6));
+    vTaskDelay(pdMS_TO_TICKS(BOOT_SWEEP_MS));
+  }
+
   for (;;) {
     // status bar and bottom line (copied under the mutex, drawn outside it)
     String st, bt;
     uint16_t sc = 0, bc = 0;
     bool sd = false, bd = false;
+    bool sp = false;
     xSemaphoreTake(dashMutex, portMAX_DELAY);
-    if (shStatusDirty) { st = shStatus; sc = shStatusCol; sd = true; shStatusDirty = false; }
+    if (shStatusDirty) {
+      st = shStatus; sc = shStatusCol; sp = shStatusPulse; sd = true;
+      shStatusDirty = false;
+    }
     if (shBottomDirty) { bt = shBottom; bc = shBottomCol; bd = true; shBottomDirty = false; }
     xSemaphoreGive(dashMutex);
     if (sd) {
       tft.fillRect(170, 0, 150, 24, COL_BAR);
       int w = tft.textWidth(st, 2);
-      tft.fillCircle(314 - w - 10, 12, 5, sc);
+      dotX = 314 - w - 10;
+      dotCol = sc;
+      dotPulse = sp;
+      tft.fillCircle(dotX, 12, 5, sc);
       drawText(st, 314, 12, MR_DATUM, 2, sc, COL_BAR, 0);
+    }
+    // The dot breathes while the session isn't up, and sits steady once it is.
+    if (dotPulse && dotX) {
+      float ph = (millis() % DOT_PULSE_MS) / (float)DOT_PULSE_MS;
+      uint8_t f = (uint8_t)(255.0f * (0.5f - 0.5f * cos(2 * PI * ph)));
+      tft.fillCircle(dotX, 12, 5, blend565(COL_BAR, dotCol, f));
     }
     if (bd) drawText(bt, 6, 227, ML_DATUM, 2, bc, COL_BG, 308);
 
@@ -400,9 +679,10 @@ void dashTask(void *param) {
       shownRpm = 0;
       if (drawnRpm != -1) {
         gaugeSet(0);
-        drawText("--", G_CX, G_CY + 8, MC_DATUM, 6, COL_LABEL, COL_BG, tft.textWidth("8888", 6));
+        drawText("--", RPM_CX, RPM_CY, MC_DATUM, 6, COL_LABEL, COL_BG, tft.textWidth("8888", 6));
         drawnRpm = -1;
       }
+      peakRpm = 0;                        // nothing left to hold on to
     } else {
       shownRpm += (target - shownRpm) * RPM_SMOOTHING;
       if (fabsf(target - shownRpm) < 5) shownRpm = target;
@@ -410,34 +690,81 @@ void dashTask(void *param) {
       if (r != drawnRpm) {
         gaugeSet(r);
         int r10 = (r + 5) / 10 * 10;          // number in 10 rpm steps: calmer to read
-        drawText(String(r10), G_CX, G_CY + 8, MC_DATUM, 6, TFT_WHITE, COL_BG, tft.textWidth("8888", 6));
+        drawText(String(r10), RPM_CX, RPM_CY, MC_DATUM, 6, TFT_WHITE, COL_BG, tft.textWidth("8888", 6));
         drawnRpm = r;
       }
     }
 
+    // The dial follows the rev zone, like each cell's symbol follows its value.
+    uint16_t tcol = drawnRpm < 0 ? COL_LABEL : rpmColor(drawnRpm);
+    if (tcol != drawnTacho) {
+      drawTachoIcon(tachoX, tachoY, tcol);
+      drawnTacho = tcol;
+    }
+
+    // Overlays go on top of the bar, so they run after gaugeSet(). A colour
+    // change repaints both legs and wipes them, hence the force flag.
+    int shown = drawnRpm < 0 ? 0 : drawnRpm;
+    bool force = gaugeFullRepaint;
+    gaugeFullRepaint = false;
+    shiftLight(shown, force);
+    peakMarker(shown, force);
+
+    // "Shift!" blinks in the middle of the top bar past RPM_RED, on the same
+    // phase as the bar's shift light so the two pulse together. Redrawn when
+    // the status was repainted as well, since that clears part of this area.
+    bool wantShift = shown >= RPM_RED && (millis() / SHIFT_BLINK_MS) % 2;
+    if (wantShift != shiftTextOn || sd) {
+      int w = tft.textWidth(SHIFT_TEXT, 2) + 6;
+      tft.fillRect(160 - w / 2, 2, w, 20, COL_BAR);
+      if (wantShift) drawText(SHIFT_TEXT, 160, 12, MC_DATUM, 2, TFT_RED, COL_BAR, 0);
+      shiftTextOn = wantShift;
+    }
+
     float bv = shBatt;
     if (bv != drawnBatt) {
-      uint16_t col = bv < 0 ? COL_LABEL : bv < 11.8 ? TFT_RED : bv < 12.2 ? TFT_YELLOW :
-                     bv <= 14.8 ? TFT_GREEN : TFT_RED;
+      // Green across the whole usable range: red only under 11.5 V (flat or
+      // not charging) and over 15 V (regulator letting go).
+      uint16_t col = bv < 0 ? COL_LABEL :
+                     (bv < 11.5f || bv > 15.0f) ? TFT_RED : TFT_GREEN;
       drawCell(CELL_BATT, bv < 0 ? String("--") : String(bv, 2), col);
+      drawCellIcon(CELL_BATT, col);
       drawnBatt = bv;
+      if (bv >= 0) cellFlash[CELL_BATT] = FLASH_FRAMES;
     }
     float cv = shCool;
     if (cv != drawnCool) {
-      uint16_t col = cv <= -999 ? COL_LABEL : cv < 60 ? TFT_SKYBLUE : cv <= 105 ? TFT_GREEN : TFT_RED;
+      // Bands: up to 65 blue (still warming), 66-99 green, 100 and over red.
+      uint16_t col = cv <= -999 ? COL_LABEL : cv < 66 ? TFT_SKYBLUE :
+                     cv < 100 ? TFT_GREEN : TFT_RED;
       drawCell(CELL_COOL, cv <= -999 ? String("--") : String(cv, 1), col);
+      drawCellIcon(CELL_COOL, col);
       drawnCool = cv;
+      if (cv > -999) cellFlash[CELL_COOL] = FLASH_FRAMES;
     }
     float av = shAirT;
     if (av != drawnAirT) {
       uint16_t col = av <= -999 ? COL_LABEL : av < 5 ? TFT_SKYBLUE : av <= 60 ? TFT_GREEN : TFT_RED;
       drawCell(CELL_AIRT, av <= -999 ? String("--") : String(av, 1), col);
+      drawCellIcon(CELL_AIRT, col);
       drawnAirT = av;
+      if (av > -999) cellFlash[CELL_AIRT] = FLASH_FRAMES;
     }
     float qv = shAirQ;
     if (qv != drawnAirQ) {
-      drawCell(CELL_AIRQ, qv < 0 ? String("--") : String((int)(qv + 0.5f)), qv < 0 ? COL_LABEL : TFT_WHITE);
+      uint16_t qcol = qv < 0 ? COL_LABEL : TFT_WHITE;
+      drawCell(CELL_AIRQ, qv < 0 ? String("--") : String((int)(qv + 0.5f)), qcol);
+      drawCellIcon(CELL_AIRQ, qcol);
       drawnAirQ = qv;
+      if (qv >= 0) cellFlash[CELL_AIRQ] = FLASH_FRAMES;
+    }
+
+    // Fresh-data cue: a title lights up as its value lands and fades back to
+    // grey, so a session that has stopped polling is obvious at a glance.
+    for (int i = 0; i < 4; i++) {
+      if (cellFlash[i] <= 0) continue;
+      cellFlash[i]--;
+      drawCellTitle(i, blend565(COL_LABEL, TFT_WHITE, 255 * cellFlash[i] / FLASH_FRAMES));
     }
 
     vTaskDelay(pdMS_TO_TICKS(DASH_FRAME_MS));

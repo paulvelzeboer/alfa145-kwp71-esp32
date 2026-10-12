@@ -1,8 +1,8 @@
 # Alfa 145 QV KWP71 reader: ESP32 CYD + ISO 9141 Click
 
-Reads a **Bosch Motronic M2.10.4** (Alfa Romeo 145 QV, part 0261204478) over the K-line with the old Bosch **KWP71** protocol. It runs on an **ESP32-2432S028 "Cheap Yellow Display"** with a **MikroE ISO 9141 Click**, and shows a live dashboard on the CYD's screen: an rpm gauge, four values (battery, coolant, air temp, air quantity), the ECU ID numbers, and a boot splash with the car badge.
+Reads a **Bosch Motronic M2.10.4** (Alfa Romeo 145 QV, part 0261204478) over the K-line with the old Bosch **KWP71** protocol. It runs on an **ESP32-2432S028 "Cheap Yellow Display"** with a **MikroE ISO 9141 Click**, and shows a live dashboard on the CYD's screen: an L-shaped rpm bar that runs along the bottom and up the right edge, wrapping four values (battery, coolant, air temp, air quantity), each with its own symbol and coloured by its own reading. It has a cluster-style boot sweep, a peak-hold tick, a blinking red zone with a `Shift!` warning, the ECU ID numbers, and a boot splash with the car badge.
 
-**Status (12 Oct 2026):** the full handshake and live values work on the real ECU, including the ID blocks (HW 0261204478, SW 1037357941, PN 46525168). A discovery run over all the ECU's ADC channels, in five engine states, identified throttle, battery, coolant, air quantity, intake air temperature and lambda, and gave the rpm and battery scales; all five dashboard values are now read from the car. The smoother dashboard (rpm polled ~3–4×/s, display on the second core) has not been tested against the ECU yet.
+**Status (12 Oct 2026):** the full handshake and live values work on the real ECU, including the ID blocks (HW 0261204478, SW 1037357941, PN 46525168). A discovery run over all the ECU's ADC channels, in five engine states, identified throttle, battery, coolant, air quantity, intake air temperature and lambda, and gave the rpm and battery scales; all five dashboard values are now read from the car. Tested on the car the same day: the handshake, the smoother dashboard, and the rpm and battery readings all behave, and air temp and air quantity return data that still has to be checked against something known.
 
 The full bring-up story, wiring, protocol findings and troubleshooting are in **[docs/kwp71-m2104-bringup.md](docs/kwp71-m2104-bringup.md)**.
 
@@ -103,7 +103,8 @@ Print `case_clickfit.stl` and `case_fitcheck.stl` first; they check the fit in m
 
 - The **kg/h scale for air quantity**: the display shows the raw count until there is something to calibrate it against.
 - **ADC 06** carries something that changes with load, still unidentified.
-- A **multimeter check on the battery scale**. The two in-car states agree on 0.073 V/step, but neither was measured directly; the sketch logs the raw byte for this.
+- A **measured point for the battery scale**. It reads plausibly on the car, but the 0.073 V/step fit has never been compared with a meter; the sketch logs the raw byte for this.
+- **Confirming air temp and air quantity**, which return sensible data but haven't been checked against a thermometer or a known airflow.
 - The first request after the handshake always gets a NAK. It's harmless, but a short pause might avoid it.
 - The case is unprinted apart from the Click holder coupon. The terminal height under the Click (7.0 mm) and the pin height above it (8.0 mm) are estimates, and they set the case height.
 

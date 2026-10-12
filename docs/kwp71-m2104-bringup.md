@@ -403,39 +403,57 @@ Still open:
 
 - The **kg/h scale for air quantity**. The idle and 3000 rpm counts suggest roughly 0.37 kg/h per count for a 2.0 litre engine, which is an expectation rather than a measurement, so the dashboard shows the raw count.
 - **ADC 06**, which clearly carries something load-dependent.
-- A **multimeter check on the battery scale**. The two in-car states agree on 0.073 V/step with no offset, but neither point was measured directly; the sketch logs the raw byte as `[BATT] raw …` for exactly this.
+- A **measured point for the battery scale**. Both in-car states agree on 0.073 V/step with no offset, and the dashboard reads plausibly on the car, but neither point was ever compared with a meter; the sketch logs the raw byte as `[BATT] raw …` for exactly this.
+- **Confirming air temp and air quantity.** Both return sensible data on the car. Air temp can be checked by warming the intake sensor, which should raise the reading and lower the raw byte; air quantity has no reference yet.
 - A short pause after the handshake, to avoid the first NAK.
 
 ## Dashboard on the CYD screen
 
-The CYD's screen shows a live dashboard: an rpm gauge, four values in a 2 × 2 grid, the connection status, and the ECU's ID numbers. A boot splash shows the car badge for 5 s first. The detailed log stays on the Serial Monitor at 115200 baud. The layout was confirmed in demo mode on 22 Sep 2026; the smoother polling has not been tested on the ECU yet.
+The CYD's screen shows a live dashboard: an L-shaped rpm bar wrapping four values in a 2 × 2 grid, each with its own symbol, plus the connection status and the ECU's ID numbers. A boot splash shows the car badge for 5 s first. The detailed log stays on the Serial Monitor at 115200 baud. The layout was confirmed in demo mode on 22 Sep 2026, and the whole dashboard, smoother polling included, ran against the car on 12 Oct 2026.
 
 ```text
-┌────────────────────────────────────────────┐
-│ (badge) ALFA 145 QV           ● CONNECTED │  status bar
-│      ╭─────────╮     ┌BATTERY ──┬COOLANT ──┐ │
-│    ╱  ▓▓▓▓▓      ╲    │    V    │   °C    │ │
-│   │      850      │   │  12.27  │  18.0   │ │
-│   │▓     rpm      │▓▓ ├AIR TEMP─┼AIR QTY ─┤ │
-│    ╲    x1000    ╱    │   °C    │  kg/h   │ │
-│   0                8  │  21.5   │   21    │ │
-│                       └─────────┴─────────┘ │
-│ HW 0261204478  SW 1037357941  PN 46525168 │  bottom line
+┌──────────────────────────────────────────────┐
+│ (badge) ALFA 145 QV    Shift!   ● CONNECTED  │  status bar
+│                                            8 │
+│        (o) RPM    ┌(+-) BATT┬(T~) COOL┐      │
+│                   │    V    │   °C    │    7 │
+│                   │  12.27  │  91.0   │      │
+│         3250      ├(T-) AIR T(>>) AIR Q      │
+│                   │   °C    │   raw   │    6 │
+│   x1000 on the bar│  13.0   │   41    │      │
+│                   └─────────┴─────────┘    5 │
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░ │  bottom leg
+│ 0       1       2       3       4            │  scale
+│ HW 0261204478  SW 1037357941  PN 46525168    │  bottom line
 └──────────────────────────────────────────────┘
+          the bar turns up the right edge at 4000
 ```
+
+`Shift!` only appears past 6500 rpm. The `(..)` sketches stand for the drawn
+symbols: a tachometer dial, a battery, a thermometer in water, a thermometer in
+air, and three airflow arrows.
 
 | Element | Position (320 × 240) | Shows | Colours |
 | --- | --- | --- | --- |
 | Status bar | top, 0–24 px | car badge (20 px), "ALFA 145 QV", and the connection status on the right | see the status table |
-| RPM gauge | left: centre (84, 128), radius 72, 12 px ring, 240° sweep | bar from 0 to 8000 rpm, ticks every 1000, 0 and 8 at the ends, big number in 10 rpm steps | bar green < 5000, yellow 5000–6499, red ≥ 6500; track grey, red zone dark red |
-| Value grid | right: 2 × 2 cells of 74 × 84 px from (164, 30) | title, unit centred below it, then the value | per value, see below |
-|  Battery (top left) |  | volts, 2 decimals | red < 11.8, yellow < 12.2, green ≤ 14.8, red above |
-|  Coolant (top right) |  | °C, 1 decimal | light blue < 60, green 60–105, red > 105 |
-|  Air temp (bottom left) |  | °C, 1 decimal, from ADC 05 | light blue < 5, green 5–60, red > 60 |
-|  Air quantity (bottom right) |  | raw count above no-flow, from ADC 04. Labelled `raw`, not `kg/h`, because the scale is unknown | white |
-| Bottom line | 214–240 px | the ID numbers once connected; before that, the latest step | grey / the step's colour |
+| RPM bar | an L: bottom leg x 6–314 at y 190–204, then up the right edge x 300–314 from y 190 to y 30, 14 px thick | 0–4000 along the bottom, 4000–8000 up the side, labelled in thousands under the bottom leg and left of the side leg | bar green < 5000, yellow 5000–6499, red ≥ 6500; track grey, red zone dark red above y 90 |
+| RPM number | left block, centred on (67, 108) | the speed in 10 rpm steps | white, grey when there's no value |
+| RPM heading | dial + `RPM` centred as one group above the number | a tachometer dial: circle, needle, hub | follows the rev zone, like the bar |
+| `Shift!` | centre of the status bar, x 144–176 | blinks at 4 Hz past `RPM_RED` | red |
+| Value grid | inside the L: 2 × 2 cells of 74 × 76 px from (134, 30) | symbol + short title, unit centred below, then the value | per value, see below |
+| Cell symbols | 17 × 13 px at +5, +4 inside each cell | battery with terminals, thermometer in water, thermometer in air, three airflow arrows | **each takes its own value's colour**, so every cell doubles as a warning lamp |
+|  Battery (`BATT`, top left) |  | volts, 2 decimals | red under 11.5 and over 15, green in between |
+|  Coolant (`COOL`, top right) |  | °C, 1 decimal | light blue up to 65, green 66–99, red 100 and over |
+|  Air temp (`AIR T`, bottom left) |  | °C, 1 decimal, from ADC 05 | light blue < 5, green 5–60, red > 60 |
+|  Air quantity (`AIR Q`, bottom right) |  | raw count above no-flow, from ADC 04. Labelled `raw`, not `kg/h`, because the scale is unknown | white. The titles are short because a 17 px symbol shares the row |
+| Bottom scale | under the bottom leg, y 206–214 | 0 to 4 in thousands | grey |
+| Bottom line | y 219–235 | the ID numbers once connected; before that, the latest step | grey / the step's colour |
 
 `--` means there's no value yet, for example before the first reading, or after the ECU's first-request NAK.
+
+The dot left of the status text **breathes** on a 1.4 s cycle while the session
+is not up, and sits steady once it is. A stalled handshake therefore never looks
+like a working one.
 
 | Status | Colour | Meaning |
 | --- | --- | --- |
@@ -452,12 +470,51 @@ The CYD's screen shows a live dashboard: an rpm gauge, four values in a 2 × 2 g
 - **Polling:** one request/reply at a time, with no pauses; the requests themselves keep the session alive. Of every 10 exchanges, 6 read rpm and one each reads battery (#1), coolant (#3), air temp (#5) and air quantity (#7); the summary log line goes out on #9. Rpm keeps the majority of the slots because it is the only value that moves fast.
 - **Slower values:** battery, coolant, air temp and air quantity each refresh about every 3 s. That is far more often than any of them actually changes. A reply that doesn't decode keeps the previous value. Expected rate: about **3–4 new rpm values per second**, from about 13 bytes per exchange at 10 ms echo delay. That's an estimate, not measured yet.
 - **Two cores:** the K-line code runs in `loop()` on core 1. The screen is drawn only by `dashTask` on core 0, at about 25 frames per second. The K-line code just hands over numbers (plain variables) and texts (through a lock, a mutex), so drawing can never delay a K-line echo.
-- **Smooth gauge:** every frame, the gauge moves 30% of the remaining distance to the latest reading (`RPM_SMOOTHING`), reaching about 90% within about 0.3 s. So the bar glides instead of jumping between readings.
-- **No flicker:** the arc only redraws the part that changed, and numbers overwrite themselves in place.
+- **Smooth bar:** every frame, the bar moves 18% of the remaining distance to the latest reading (`RPM_SMOOTHING`), reaching about 90% within about 0.5 s. So it glides instead of jumping between readings.
+- **No flicker:** only the stretch of bar that changed is redrawn — growing paints bar colour over track, shrinking paints track back over bar — and numbers overwrite themselves in place.
+- **Two resolutions, on purpose.** The corner is always `RPM_MID`, half of `RPM_MAX`, so the long bottom leg carries 0–4000 at 13 rpm per pixel and the shorter side leg carries 4000–8000 at 25 rpm per pixel. The scale is therefore not linear across the whole L; the labels in thousands are there so that is visible rather than misleading. Idle and cruising sit on the fine half, which is where the resolution is worth having.
+
+### Animation
+
+All of it runs in the display task on core 0, so none of it can delay a K-line
+echo. Everything that blinks shares one phase (`SHIFT_BLINK_MS`), so the red
+indicators pulse together rather than against each other.
+
+| What | When | Looks like |
+| --- | --- | --- |
+| Boot sweep | once, after the splash | the bar runs 0 → 8000 → 0 in about 1.2 s with the number following, the way a cluster wakes up. It also proves both legs and the red zone draw before any data arrives |
+| Peak hold | always | a **steady white** 3 px tick rides the highest rpm of the last 1.2 s, then slides back at about 1000 rpm/s. Hidden within `PEAK_MIN_GAP` of the bar's own tip, where it would only fight the shift light |
+| Shift light | past `RPM_RED` | the last 16 px of the bar is **blanked to the background** at 4 Hz, so the red bar looks like it is pulsing shorter |
+| `Shift!` | past `RPM_RED` | red text blinking in the middle of the status bar, on the same phase |
+| Breathing dot | while not connected | the status dot fades in and out on a 1.4 s cycle |
+| Fresh-data cue | as each value lands | the cell's title lights white and fades back to grey over about 320 ms, so a session that has stopped polling is obvious |
+
+**Why the two red-zone indicators differ.** Past 6500 the bar is already red, so
+a red marker on it would be invisible. The blinking tip therefore means "you are
+in the red zone" and is done by blanking, while the peak tick stays steady white
+and means "this is the speed you actually hit". Keeping one blinking and one
+steady is what lets the two be read apart.
+
+**No stale pixels.** Both overlays sit on top of the bar, so they are drawn after
+it, and `gaugeSlice()` repaints the slice they vacate with the right colour — bar
+below the current reading, track above it. A colour-zone change repaints both
+legs and wipes the overlays, so `gaugeSet()` raises `gaugeFullRepaint` and they
+redraw unconditionally on that frame. This was checked by simulating 1200 frames
+of a full sweep, including a lost session, and comparing every pixel of both legs
+against a freshly built ideal on each frame.
 
 | Constant | Value | Controls |
 | --- | --- | --- |
-| `RPM_MAX`, `RPM_WARN`, `RPM_RED` | 8000, 5000, 6500 | gauge end, start of yellow, start of red |
+| `RPM_MAX`, `RPM_WARN`, `RPM_RED` | 8000, 5000, 6500 | bar end, start of yellow, start of red |
+| `RPM_MID` | `RPM_MAX / 2` | the rpm at the corner, where the bar turns upward |
+| `G_W`, `G_BX0`/`G_BX1`/`G_BY`, `G_VX`/`G_VY0`/`G_VY1` | 14, 6/314/190, 300/190/30 | thickness and the two legs of the L |
+| `RPM_CX`, `RPM_CY` | 67, 108 | centre of the big rpm number |
+| `ICON_W`, `ICON_H` | 17, 13 | box every symbol is drawn in |
+| `BOOT_SWEEP_STEPS`, `BOOT_SWEEP_MS` | 28, 20 | length and speed of the self-test sweep |
+| `PEAK_HOLD_MS`, `PEAK_FALL`, `PEAK_MIN_GAP`, `PEAK_W` | 1200, 40, 120, 3 | peak tick: hold time, fall rate per frame, how close to the tip it hides, thickness |
+| `SHIFT_BLINK_MS`, `SHIFT_W`, `SHIFT_TEXT` | 125, 16, `"Shift!"` | blink phase shared by every red indicator, length of the blanked tip, the warning text |
+| `DOT_PULSE_MS` | 1400 | breathing period of the status dot |
+| `FLASH_FRAMES` | 8 | frames a cell title stays lit after a new value |
 | `DASH_FRAME_MS` | 40 | frame time of the display task (\~25 fps) |
 | `RPM_SMOOTHING` | 0.18 | how fast the gauge follows a new reading (0.30 first, looked too twitchy) |
 | `SPLASH_MS` | 5000 | how long the boot splash stays up (it delays the first handshake by that much) |
@@ -495,6 +552,7 @@ Set `#define DEMO_MODE 1` and upload to check the screen without an ECU.
 - **Battery:** 12.4 V at idle, about 14.1 V above 1000 rpm.
 - **Coolant:** warms from 20 to 90 °C in a minute.
 - **Air temp:** rises from 20 to 38 °C.
+- **Symbols and animation:** all of it runs, so demo mode is the way to judge the look — the sweep crosses every colour zone, so the red tip flash, `Shift!` and the peak tick all appear.
 - **Air quantity:** follows the rpm, scaled to the counts the car gives: about 7 with the engine off, 40 at idle and 75 at 3000 rpm.
 - **Screen:** shows the ECU's real ID numbers, and the status says **DEMO**.
 
