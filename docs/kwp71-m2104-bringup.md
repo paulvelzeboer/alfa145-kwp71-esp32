@@ -415,18 +415,17 @@ The CYD's screen shows a live dashboard: an L-shaped rpm bar wrapping four value
 ┌──────────────────────────────────────────────┐
 │ (badge) ALFA 145 QV    Shift!   ● CONNECTED  │  status bar
 │                                            8 │
-│        (o) RPM    ┌(+-) BATT┬(T~) COOL┐      │
+│       (o) RPM     ┌(+-) BATT┬(T~) COOL┐      │
 │                   │    V    │   °C    │    7 │
-│                   │  12.27  │  91.0   │      │
-│         3250      ├(T-) AIR T(>>) AIR Q      │
-│                   │   °C    │   raw   │    6 │
-│   x1000 on the bar│  13.0   │   41    │      │
-│                   └─────────┴─────────┘    5 │
+│        3250       │  12.27  │  91.0   │      │
+│                   ├(T-)AIR T┼(>>)AIR Q┤    6 │
+│  ┌──────────────┐ │   °C    │   raw   │      │
+│  │ rpm history  │ │  13.0   │   41    │    5 │
+│  └──────────────┘ └─────────┴─────────┘      │
 │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░ │  bottom leg
 │ 0       1       2       3       4            │  scale
 │ HW 0261204478  SW 1037357941  PN 46525168    │  bottom line
 └──────────────────────────────────────────────┘
-          the bar turns up the right edge at 4000
 ```
 
 `Shift!` only appears past 6500 rpm. The `(..)` sketches stand for the drawn
@@ -437,7 +436,8 @@ air, and three airflow arrows.
 | --- | --- | --- | --- |
 | Status bar | top, 0–24 px | car badge (20 px), "ALFA 145 QV", and the connection status on the right | see the status table |
 | RPM bar | an L: bottom leg x 6–314 at y 190–204, then up the right edge x 300–314 from y 190 to y 30, 14 px thick | 0–4000 along the bottom, 4000–8000 up the side, labelled in thousands under the bottom leg and left of the side leg | bar green < 5000, yellow 5000–6499, red ≥ 6500; track grey, red zone dark red above y 90 |
-| RPM number | left block, centred on (67, 108) | the speed in 10 rpm steps | white, grey when there's no value |
+| RPM number | left block, centred on (67, 108) | the speed in 10 rpm steps, in font 7, the library's 7-segment face. 32 px per digit, so `8888` is 128 px and spans x 3–131, 3 px clear of the cells. **Clamped to `RPM_MAX`**: `blk[2]` × 40 can reach 10200, and a fifth digit would run off the edge and into a cell. The serial summary still logs the unclamped value | white, grey when there's no value |
+| RPM history | framed box x 6–128, y 138–186; plot area 118 × 42 px | a filled rpm trace, one sample per 250 ms, so about **30 s** of history scrolling leftwards. A dim line marks `RPM_RED` behind it. 236 bytes of RAM | each column takes its own sample's zone colour, so peaks go yellow then red |
 | RPM heading | dial + `RPM` centred as one group above the number | a tachometer dial: circle, needle, hub | follows the rev zone, like the bar |
 | `Shift!` | centre of the status bar, x 144–176 | blinks at 4 Hz past `RPM_RED` | red |
 | Value grid | inside the L: 2 × 2 cells of 74 × 76 px from (134, 30) | symbol + short title, unit centred below, then the value | per value, see below |
@@ -495,6 +495,32 @@ in the red zone" and is done by blanking, while the peak tick stays steady white
 and means "this is the speed you actually hit". Keeping one blinking and one
 steady is what lets the two be read apart.
 
+| RPM history | every 250 ms | a new sample lands on the right and the trace scrolls left. Each column is cleared and redrawn in one pass, so no column is blank long enough to see |
+| Onboard LED | past `RPM_RED` | the CYD's own red LED (GPIO 4, active low) flashes on the same phase, so the shift warning carries in peripheral vision without looking at the screen |
+
+### Backlight and the light sensor
+
+The backlight is on LEDC PWM rather than a plain digital HIGH, driven by the
+CYD's own light sensor (LDR on GPIO 34), so the screen dims at night instead of
+glaring. The running average moves 5% per frame (`LDR_SMOOTH`), slow enough that
+a hand passing over the sensor or oncoming headlights don't make it pump, and the
+duty never drops below `BL_MIN` so it cannot go dark.
+
+**Calibrating it.** `LDR_DARK` and `LDR_BRIGHT` are the raw readings at the two
+ends, and `map()` handles them in either order — **so if the screen dims in
+daylight instead of at night, swap those two numbers**, that is this board's
+sensor polarity and nothing else needs to change. The raw reading is printed once
+at boot (`LDR at boot: …`) and appears in every summary log line as `LDR:`, so
+the two ends can be read off the board itself: cover the sensor, tap reset, and
+note the number. Measured on this board: **657 in a lit room**, and it read 0
+once in brighter light, so lower really is brighter here. `LDR_DARK` is still a
+guessed 3000 and wants a real covered-sensor reading.
+
+**The LED is inside the case.** The printed lid has a window for the screen and
+nothing else, so once the board is cased the shift LED is hidden. It needs either
+a small hole in the lid above the LED or a light pipe; until then the LED only
+helps on the bench. Nothing in `tools/make_case.py` cuts that hole yet.
+
 **No stale pixels.** Both overlays sit on top of the bar, so they are drawn after
 it, and `gaugeSlice()` repaints the slice they vacate with the right colour — bar
 below the current reading, track above it. A colour-zone change repaints both
@@ -515,6 +541,11 @@ against a freshly built ideal on each frame.
 | `SHIFT_BLINK_MS`, `SHIFT_W`, `SHIFT_TEXT` | 125, 16, `"Shift!"` | blink phase shared by every red indicator, length of the blanked tip, the warning text |
 | `DOT_PULSE_MS` | 1400 | breathing period of the status dot |
 | `FLASH_FRAMES` | 8 | frames a cell title stays lit after a new value |
+| `RPM_FONT` | 7 | the 7-segment face for the big number (`LOAD_FONT7`, already in TFT_eSPI's setup; `LOAD_GFXFF` is **not** enabled, so the Free Fonts are unavailable) |
+| `SPARK_X`/`SPARK_Y`/`SPARK_W`/`SPARK_H`, `SPARK_MS` | 6/138/122/48, 250 | the history box and its sample interval |
+| `BL_FREQ`, `BL_BITS`, `BL_MIN`, `BL_MAX` | 5000, 8, 40, 255 | backlight PWM, and the floor it never dims past |
+| `LDR_DARK`, `LDR_BRIGHT`, `LDR_SMOOTH`, `LDR_STEP` | 3000, 300, 0.05, 4 | the sensor's two ends, how fast it follows, smallest duty change worth writing |
+| `RGB_R_PIN`/`RGB_G_PIN`/`RGB_B_PIN`, `LDR_PIN` | 4/16/17, 34 | onboard LED (active low) and light sensor |
 | `DASH_FRAME_MS` | 40 | frame time of the display task (\~25 fps) |
 | `RPM_SMOOTHING` | 0.18 | how fast the gauge follows a new reading (0.30 first, looked too twitchy) |
 | `SPLASH_MS` | 5000 | how long the boot splash stays up (it delays the first handshake by that much) |

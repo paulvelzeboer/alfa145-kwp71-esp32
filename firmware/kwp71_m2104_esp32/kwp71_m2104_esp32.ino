@@ -72,6 +72,13 @@ TFT_eSPI tft = TFT_eSPI();
 #define K_RX_PIN 22
 #define TFT_BACKLIGHT_PIN 21   // CYD display backlight, active high
 
+// Hardware already on the CYD that the dashboard now uses. The RGB LED is
+// common anode, so LOW switches a colour ON.
+#define RGB_R_PIN 4
+#define RGB_G_PIN 16
+#define RGB_B_PIN 17
+#define LDR_PIN   34           // light sensor, ADC1 channel 6
+
 // DEMO_MODE 1: no K-line traffic at all - the dashboard shows simulated
 // values (rpm sweeping into the red zone, battery, coolant warming up) so
 // the screen can be checked without an ECU. Status bar shows "DEMO".
@@ -185,8 +192,12 @@ unsigned long selfEchoErrors = 0; // bytes whose loopback was missing or wrong
 #define G_VY1    30             // side leg: top, RPM_MAX
 
 // The big rpm number sits left of the cells, in the space the dial used to fill.
+// Font 7 is the library's 7-segment face: 32 px per digit, 48 px tall, so
+// "8888" is 128 px and lands at x 3-131, clear of the cells at 134. A fifth
+// digit would not fit, which is why the number is clamped to RPM_MAX below.
 #define RPM_CX   67
 #define RPM_CY   108
+#define RPM_FONT 7
 
 // 2 x 2 value grid, inside the L: 0 = battery, 1 = coolant, 2 = air temp, 3 = air qty
 #define PANEL_X  134
@@ -244,6 +255,30 @@ bool     shBottomDirty = false;
 #define SHIFT_TEXT       "Shift!"   // blinks in the top bar past RPM_RED
 #define DOT_PULSE_MS     1400   // breathing period of the status dot
 #define FLASH_FRAMES     8      // frames a cell title stays lit after a new value
+
+// Backlight: PWM, following the light sensor. LDR_DARK and LDR_BRIGHT are the
+// raw readings at the two ends; SWAP THEM if the screen dims in daylight
+// instead of at night, because that is this board's sensor polarity.
+#define BL_FREQ      5000
+#define BL_BITS      8
+#define BL_MIN       40         // never let it go fully dark
+#define BL_MAX       255
+#define LDR_DARK     3000
+#define LDR_BRIGHT   300
+#define LDR_SMOOTH   0.05f      // slow, so headlights sweeping past don't flicker it
+#define LDR_STEP     4          // smallest duty change worth writing
+
+// Rolling rpm history, in the space under the big number. One sample per
+// SPARK_MS across SPARK_PW columns gives about 30 s of history.
+#define SPARK_X  6
+#define SPARK_Y  138
+#define SPARK_W  122
+#define SPARK_H  48
+#define SPARK_PX (SPARK_X + 2)          // plot area inside the frame
+#define SPARK_PY (SPARK_Y + 3)
+#define SPARK_PW (SPARK_W - 4)
+#define SPARK_PH (SPARK_H - 6)
+#define SPARK_MS 250
 
 #define SPLASH_MS       5000    // how long the boot splash stays on screen
 #define DASH_FRAME_MS   40      // ~25 frames per second
@@ -308,6 +343,38 @@ void gaugeSet(int rpm) {
   gaugeBottom = nb;
   gaugeSide = ns;
   gaugeColor = col;
+}
+
+int16_t sparkBuf[SPARK_PW];     // rpm history, newest last, -1 = no sample
+volatile int ldrRaw = 0;        // last light-sensor reading, for the log line
+
+// Onboard RGB LED as a shift light, so the warning is visible without looking
+// at the screen. Active low, and only the red channel is used.
+void ledShift(bool on) {
+  digitalWrite(RGB_R_PIN, on ? LOW : HIGH);
+}
+
+// Newest sample on the right, so the trace scrolls left as it fills.
+void sparkPush(int rpm) {
+  memmove(sparkBuf, sparkBuf + 1, (SPARK_PW - 1) * sizeof(sparkBuf[0]));
+  sparkBuf[SPARK_PW - 1] = rpm;
+}
+
+// Each column is cleared and redrawn in one pass, so no column is ever left
+// blank long enough to see. A dim line marks the red zone behind the trace.
+void sparkDraw() {
+  int base = SPARK_PY + SPARK_PH - 1;
+  int yRed = base - (long)RPM_RED * (SPARK_PH - 1) / RPM_MAX;
+  for (int i = 0; i < SPARK_PW; i++) {
+    int x = SPARK_PX + i;
+    tft.drawFastVLine(x, SPARK_PY, SPARK_PH, COL_BG);
+    tft.drawPixel(x, yRed, COL_REDZONE);
+    int v = sparkBuf[i];
+    if (v < 0) continue;
+    int h = (long)min(v, RPM_MAX) * (SPARK_PH - 1) / RPM_MAX;
+    if (h > 0) tft.drawFastVLine(x, base - h + 1, h, rpmColor(v));
+    else       tft.drawPixel(x, base, rpmColor(v));
+  }
 }
 
 // Blend two RGB565 colours; f = 0 gives a, f = 255 gives b. Used for the
@@ -515,6 +582,13 @@ void drawCellTitle(int i, uint16_t col) {
            col, COL_BG, 0);
 }
 
+// The big number has one owner for font, position and clear width, so the
+// three places that draw it cannot drift apart.
+void drawRpmNumber(const String &txt, uint16_t col) {
+  drawText(txt, RPM_CX, RPM_CY, MC_DATUM, RPM_FONT, col, COL_BG,
+           tft.textWidth("8888", RPM_FONT));
+}
+
 // Static parts; called once from setup() before the display task starts.
 void dashFrame() {
   tft.fillScreen(COL_BG);
@@ -554,7 +628,11 @@ void dashFrame() {
   tachoY = RPM_CY - 58;
   drawTachoIcon(tachoX, tachoY, COL_LABEL);
   drawText("RPM", tachoX + ICON_W + 4, RPM_CY - 52, ML_DATUM, 2, COL_LABEL, COL_BG, 0);
-  drawText("x1000 on the bar", RPM_CX, RPM_CY + 44, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
+  // The rpm history takes the space the "x1000" hint used to fill; both legs
+  // of the bar already carry labels in thousands, so the hint was redundant.
+  tft.drawRoundRect(SPARK_X, SPARK_Y, SPARK_W, SPARK_H, 5, COL_FRAME);
+  for (int i = 0; i < SPARK_PW; i++) sparkBuf[i] = -1;
+  sparkDraw();
 
   // 2 x 2 value grid: title (left), unit (right), value in the middle.
   // Units live in the labels so the value line can stay as wide as possible.
@@ -629,6 +707,9 @@ void dashTask(void *param) {
   bool dotPulse = false;
   bool shiftTextOn = false;     // "Shift!" currently painted in the top bar
   uint16_t drawnTacho = COL_LABEL;
+  unsigned long sparkAt = 0;
+  float ldrAvg = analogRead(LDR_PIN);
+  int blDuty = BL_MAX;
 
   // Self-test sweep, the way a cluster wakes up: run the bar to the top and
   // back once. It also proves both legs and the red zone draw before any data
@@ -638,8 +719,7 @@ void dashTask(void *param) {
     int r = (long)RPM_MAX * step / BOOT_SWEEP_STEPS;
     gaugeSet(r);
     gaugeFullRepaint = false;   // no overlays during the sweep
-    drawText(String(r / 10 * 10), RPM_CX, RPM_CY, MC_DATUM, 6, TFT_WHITE, COL_BG,
-             tft.textWidth("8888", 6));
+    drawRpmNumber(String(r / 10 * 10), TFT_WHITE);
     vTaskDelay(pdMS_TO_TICKS(BOOT_SWEEP_MS));
   }
 
@@ -679,7 +759,7 @@ void dashTask(void *param) {
       shownRpm = 0;
       if (drawnRpm != -1) {
         gaugeSet(0);
-        drawText("--", RPM_CX, RPM_CY, MC_DATUM, 6, COL_LABEL, COL_BG, tft.textWidth("8888", 6));
+        drawRpmNumber("--", COL_LABEL);
         drawnRpm = -1;
       }
       peakRpm = 0;                        // nothing left to hold on to
@@ -689,8 +769,12 @@ void dashTask(void *param) {
       int r = (int)(shownRpm + 0.5f);
       if (r != drawnRpm) {
         gaugeSet(r);
-        int r10 = (r + 5) / 10 * 10;          // number in 10 rpm steps: calmer to read
-        drawText(String(r10), RPM_CX, RPM_CY, MC_DATUM, 6, TFT_WHITE, COL_BG, tft.textWidth("8888", 6));
+        // 10 rpm steps, calmer to read. Clamped to RPM_MAX because a nonsense
+        // reading - blk[2] x 40 can reach 10200 - would be five digits and
+        // would run off the left edge and into the cells. The serial summary
+        // still logs the unclamped value.
+        int r10 = min((r + 5) / 10 * 10, (int)RPM_MAX);
+        drawRpmNumber(String(r10), TFT_WHITE);
         drawnRpm = r;
       }
     }
@@ -719,6 +803,25 @@ void dashTask(void *param) {
       tft.fillRect(160 - w / 2, 2, w, 20, COL_BAR);
       if (wantShift) drawText(SHIFT_TEXT, 160, 12, MC_DATUM, 2, TFT_RED, COL_BAR, 0);
       shiftTextOn = wantShift;
+    }
+    ledShift(wantShift);        // the onboard LED flashes on the same phase
+
+    // rpm history: one sample per SPARK_MS, then the whole strip is redrawn
+    if (millis() - sparkAt >= SPARK_MS) {
+      sparkAt = millis();
+      sparkPush(drawnRpm < 0 ? -1 : shown);
+      sparkDraw();
+    }
+
+    // Backlight follows the light sensor, heavily smoothed so a hand passing
+    // over it or oncoming headlights don't make the screen pump.
+    ldrRaw = analogRead(LDR_PIN);
+    ldrAvg += (ldrRaw - ldrAvg) * LDR_SMOOTH;
+    int duty = constrain((int)map((long)ldrAvg, LDR_DARK, LDR_BRIGHT, BL_MIN, BL_MAX),
+                         BL_MIN, BL_MAX);
+    if (abs(duty - blDuty) >= LDR_STEP) {
+      ledcWrite(TFT_BACKLIGHT_PIN, duty);
+      blDuty = duty;
     }
 
     float bv = shBatt;
@@ -1308,6 +1411,7 @@ bool pollAndDisplayParams() {
     line += "  Cool: " + (lastCool > -999 ? String(lastCool, 1) + "C" : String("--"));
     line += "  AirT: " + (lastAirT > -999 ? String(lastAirT, 1) + "C" : String("--"));
     line += "  AirQ: " + (lastAirQ >= 0 ? String(lastAirQ, 0) : String("--"));
+    line += "  LDR: " + String(ldrRaw);
     logLine(line, TFT_WHITE);
   }
   return true;
@@ -1323,8 +1427,18 @@ void setup() {
   tft.invertDisplay(false);
   // Backlight: TFT_eSPI only switches it on when TFT_BACKLIGHT_ON is defined
   // in User_Setup.h, which it isn't here (TFT_BL 21 only) - so do it here.
-  pinMode(TFT_BACKLIGHT_PIN, OUTPUT);
-  digitalWrite(TFT_BACKLIGHT_PIN, HIGH);
+  // Backlight on PWM rather than a plain HIGH, so the light sensor can dim it.
+  ledcAttach(TFT_BACKLIGHT_PIN, BL_FREQ, BL_BITS);
+  ledcWrite(TFT_BACKLIGHT_PIN, BL_MAX);
+  // One reading at boot, so the two LDR constants can be checked against the
+  // room the board is actually in.
+  Serial.println("LDR at boot: " + String(analogRead(LDR_PIN)) +
+                 "  (" + String(LDR_DARK) + " = dark -> dim, " +
+                 String(LDR_BRIGHT) + " = bright -> full)");
+  // RGB LED: all three off (active low) until the shift light wants red.
+  pinMode(RGB_R_PIN, OUTPUT); digitalWrite(RGB_R_PIN, HIGH);
+  pinMode(RGB_G_PIN, OUTPUT); digitalWrite(RGB_G_PIN, HIGH);
+  pinMode(RGB_B_PIN, OUTPUT); digitalWrite(RGB_B_PIN, HIGH);
   tft.setRotation(1);
   // Colour order: this panel is BGR, TFT_eSPI's setup defaults to RGB (red
   // and blue swapped). Rewrite the orientation register the way setRotation(1)
