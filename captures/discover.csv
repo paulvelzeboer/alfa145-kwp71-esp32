@@ -1,0 +1,86 @@
+time_s,pass,note,kind,key,type,type_name,data_hex
+0.38,1,"cold, engine off, 14 C",known,battery,0A,NAK,06,6
+0.79,1,"cold, engine off, 14 C",known,rpm,FE,,00 00,0,0
+1.14,1,"cold, engine off, 14 C",known,coolant_adc3,FB,,00 CA,0,202
+1.48,1,"cold, engine off, 14 C",known,airtemp_adc2?,FB,,00 FE,0,254
+1.77,1,"cold, engine off, 14 C",known,dtc,FC,,00,0
+2.11,1,"cold, engine off, 14 C",adc,00,FB,,00 18,0,24
+2.46,1,"cold, engine off, 14 C",adc,01,FB,,00 A4,0,164
+2.8,1,"cold, engine off, 14 C",adc,02,FB,,00 FE,0,254
+3.13,1,"cold, engine off, 14 C",adc,03,FB,,00 CA,0,202
+3.48,1,"cold, engine off, 14 C",adc,04,FB,,00 06,0,6
+3.83,1,"cold, engine off, 14 C",adc,05,FB,,00 C5,0,197
+4.18,1,"cold, engine off, 14 C",adc,06,FB,,00 83,0,131
+4.53,1,"cold, engine off, 14 C",adc,07,FB,,00 5D,0,93
+4.88,1,"cold, engine off, 14 C",adc,08,FB,,00 FE,0,254
+5.23,1,"cold, engine off, 14 C",adc,09,FB,,00 00,0,0
+5.58,1,"cold, engine off, 14 C",adc,0A,FB,,00 00,0,0
+5.93,1,"cold, engine off, 14 C",adc,0B,FB,,00 FF,0,255
+6.22,1,"cold, engine off, 14 C",adc,0C,09,ACK,
+6.5,1,"cold, engine off, 14 C",adc,0D,09,ACK,
+6.79,1,"cold, engine off, 14 C",adc,0E,09,ACK,
+7.08,1,"cold, engine off, 14 C",adc,0F,09,ACK,
+7.55,1,"cold, engine off, 14 C",ram,0000,FE,,00 8F 00 00,0,143,0,0
+8.03,1,"cold, engine off, 14 C",ram,0004,FE,,04 00 33 D0,4,0,51,208
+8.51,1,"cold, engine off, 14 C",ram,0008,FE,,84 02 04 1F,132,2,4,31
+8.98,1,"cold, engine off, 14 C",ram,000C,FE,,00 02 00 00,0,2,0,0
+9.46,1,"cold, engine off, 14 C",ram,0010,FE,,00 00 00 00,0,0,0,0
+9.92,1,"cold, engine off, 14 C",ram,0014,FE,,00 00 01 00,0,0,1,0
+10.4,1,"cold, engine off, 14 C",ram,0018,FE,,00 00 00 00,0,0,0,0
+10.86,1,"cold, engine off, 14 C",ram,001C,FE,,00 00 00 00,0,0,0,0
+11.34,1,"cold, engine off, 14 C",ram,0020,FE,,00 02 00 00,0,2,0,0
+11.81,1,"cold, engine off, 14 C",ram,0024,FE,,80 00 00 00,128,0,0,0
+12.29,1,"cold, engine off, 14 C",ram,0028,FE,,0C 00 40 00,12,0,64,0
+12.77,1,"cold, engine off, 14 C",ram,002C,FE,,00 00 47 92,0,0,71,146
+13.25,1,"cold, engine off, 14 C",ram,0030,FE,,81 00 03 05,129,0,3,5
+13.72,1,"cold, engine off, 14 C",ram,0034,FE,,00 03 A3 00,0,3,163,0
+14.2,1,"cold, engine off, 14 C",ram,0038,FE,,43 00 00 00,67,0,0,0
+14.68,1,"cold, engine off, 14 C",ram,003C,FE,,00 00 00 C5,0,0,0,197
+15.15,1,"cold, engine off, 14 C",ram,0040,FE,,00 00 00 00,0,0,0,0
+15.63,1,"cold, engine off, 14 C",ram,0044,FE,,00 00 00 00,0,0,0,0
+16.11,1,"cold, engine off, 14 C",ram,0048,FE,,00 07 00 00,0,7,0,0
+16.59,1,"cold, engine off, 14 C",ram,004C,FE,,00 00 00 00,0,0,0,0
+17.06,1,"cold, engine off, 14 C",ram,0050,FE,,00 00 00 00,0,0,0,0
+17.54,1,"cold, engine off, 14 C",ram,0054,FE,,00 00 00 00,0,0,0,0
+18.0,1,"cold, engine off, 14 C",ram,0058,FE,,00 00 00 00,0,0,0,0
+18.48,1,"cold, engine off, 14 C",ram,005C,FE,,00 00 00 00,0,0,0,0
+18.95,1,"cold, engine off, 14 C",ram,0060,FE,,00 00 00 00,0,0,0,0
+19.43,1,"cold, engine off, 14 C",ram,0064,FE,,00 00 00 00,0,0,0,0
+19.91,1,"cold, engine off, 14 C",ram,0068,FE,,06 6D 13 4A,6,109,19,74
+20.37,1,"cold, engine off, 14 C",ram,006C,FE,,C8 06 6D 00,200,6,109,0
+20.85,1,"cold, engine off, 14 C",ram,0070,FE,,00 00 00 00,0,0,0,0
+21.32,1,"cold, engine off, 14 C",ram,0074,FE,,00 00 00 00,0,0,0,0
+21.8,1,"cold, engine off, 14 C",ram,0078,FE,,00 00 00 00,0,0,0,0
+22.28,1,"cold, engine off, 14 C",ram,007C,FE,,00 BC 00 00,0,188,0,0
+22.76,1,"cold, engine off, 14 C",ram,0080,FE,,00 00 00 00,0,0,0,0
+23.23,1,"cold, engine off, 14 C",ram,0084,FE,,00 00 00 00,0,0,0,0
+23.71,1,"cold, engine off, 14 C",ram,0088,FE,,00 00 02 00,0,0,2,0
+24.19,1,"cold, engine off, 14 C",ram,008C,FE,,00 00 00 00,0,0,0,0
+24.66,1,"cold, engine off, 14 C",ram,0090,FE,,00 00 00 00,0,0,0,0
+25.14,1,"cold, engine off, 14 C",ram,0094,FE,,00 00 00 00,0,0,0,0
+25.62,1,"cold, engine off, 14 C",ram,0098,FE,,00 00 00 00,0,0,0,0
+26.09,1,"cold, engine off, 14 C",ram,009C,FE,,00 00 00 FF,0,0,0,255
+26.57,1,"cold, engine off, 14 C",ram,00A0,FE,,12 95 13 00,18,149,19,0
+27.05,1,"cold, engine off, 14 C",ram,00A4,FE,,00 00 00 00,0,0,0,0
+27.53,1,"cold, engine off, 14 C",ram,00A8,FE,,00 00 00 00,0,0,0,0
+28.0,1,"cold, engine off, 14 C",ram,00AC,FE,,00 00 00 00,0,0,0,0
+28.48,1,"cold, engine off, 14 C",ram,00B0,FE,,00 00 00 00,0,0,0,0
+28.96,1,"cold, engine off, 14 C",ram,00B4,FE,,01 00 00 00,1,0,0,0
+29.43,1,"cold, engine off, 14 C",ram,00B8,FE,,00 00 00 00,0,0,0,0
+29.91,1,"cold, engine off, 14 C",ram,00BC,FE,,00 00 00 00,0,0,0,0
+30.39,1,"cold, engine off, 14 C",ram,00C0,FE,,00 00 00 00,0,0,0,0
+30.86,1,"cold, engine off, 14 C",ram,00C4,FE,,00 26 34 0A,0,38,52,10
+31.34,1,"cold, engine off, 14 C",ram,00C8,FE,,7B CE 1A 00,123,206,26,0
+31.82,1,"cold, engine off, 14 C",ram,00CC,FE,,81 30 01 1C,129,48,1,28
+32.3,1,"cold, engine off, 14 C",ram,00D0,FE,,09 B6 02 AA,9,182,2,170
+32.77,1,"cold, engine off, 14 C",ram,00D4,FE,,AA AA AA AA,170,170,170,170
+33.25,1,"cold, engine off, 14 C",ram,00D8,FE,,AA AA AA AA,170,170,170,170
+33.73,1,"cold, engine off, 14 C",ram,00DC,FE,,AA AA AA AA,170,170,170,170
+34.2,1,"cold, engine off, 14 C",ram,00E0,FE,,AA AA AA AA,170,170,170,170
+34.68,1,"cold, engine off, 14 C",ram,00E4,FE,,AA AA AA AA,170,170,170,170
+35.16,1,"cold, engine off, 14 C",ram,00E8,FE,,AA AA AA AA,170,170,170,170
+35.63,1,"cold, engine off, 14 C",ram,00EC,FE,,AA AA AA AA,170,170,170,170
+36.11,1,"cold, engine off, 14 C",ram,00F0,FE,,AA AA AA AA,170,170,170,170
+36.59,1,"cold, engine off, 14 C",ram,00F4,FE,,AA AA AA AA,170,170,170,170
+37.07,1,"cold, engine off, 14 C",ram,00F8,FE,,AA AA AA AA,170,170,170,170
+37.54,1,"cold, engine off, 14 C",ram,00FC,FE,,AA AA AA AA,170,170,170,170

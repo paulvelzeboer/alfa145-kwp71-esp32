@@ -2,7 +2,7 @@
 
 Reads a **Bosch Motronic M2.10.4** (Alfa Romeo 145 QV, part 0261204478) over the K-line with the old Bosch **KWP71** protocol. It runs on an **ESP32-2432S028 "Cheap Yellow Display"** with a **MikroE ISO 9141 Click**, and shows a live dashboard on the CYD's screen: an rpm gauge, four values (battery, coolant, air temp, air quantity), the ECU ID numbers, and a boot splash with the car badge.
 
-**Status (22 Sep 2026):** the full handshake and live values work on the real ECU (bench, engine off). The ESP32 reads 12.27 V, 18 °C and 0 rpm, plus the ID blocks: HW 0261204478, SW 1037357941, PN 46525168. The smoother dashboard (rpm polled ~3–4×/s, display on the second core) compiles but hasn't been tested on the ECU yet.
+**Status (12 Oct 2026):** the full handshake and live values work on the real ECU, including the ID blocks (HW 0261204478, SW 1037357941, PN 46525168). A discovery run over all the ECU's ADC channels, in five engine states, identified throttle, battery, coolant, air quantity, intake air temperature and lambda, and gave the rpm and battery scales; all five dashboard values are now read from the car. The smoother dashboard (rpm polled ~3–4×/s, display on the second core) has not been tested against the ECU yet.
 
 The full bring-up story, wiring, protocol findings and troubleshooting are in **[docs/kwp71-m2104-bringup.md](docs/kwp71-m2104-bringup.md)**.
 
@@ -15,11 +15,12 @@ The full bring-up story, wiring, protocol findings and troubleshooting are in **
 | `tools/kwp71_m2_10_4.py` | PC tool: KWP71 over a KKL / VAG-COM 409.1 cable (`--probe` for wakeup + sync only) |
 | `tools/m2104_sim.py` | M2.10.4 simulator: the PC + KKL cable plays the ECU for desk testing |
 | `tools/check_wakeup.py` | Decodes the 5-baud 0x10 wakeup from a sigrok CSV capture |
+| `tools/kwp71_discover.py` | Asks the ECU for everything it answers (ADC channels, RAM ranges) and logs it to CSV; `--compare` diffs two runs |
 | `tools/make_case.py` | Generates the case (STL + 3MF) from the dimensions at the top of the file |
 | `tools/trace_badge.py` | Traces a badge image into outlines for the lid |
 | `tools/make_logo_header.py` | Converts a logo image into display data for the sketch |
 | `docs/kwp71-m2104-bringup.md` | Documentation: bring-up plan, results, dashboard, troubleshooting |
-| `captures/` | Logic analyzer captures (the existing ones show no K-line activity; see the doc, P0) |
+| `captures/` | Logic analyzer captures, plus the `discover*.csv` runs that produced the ADC map |
 | `hardware/` | Printable case for the CYD + Click: STL files plus `case_lid.3mf` for multi-colour printing, see [hardware/README.md](hardware/README.md) |
 | `archive/` | Older sketch version and an old KKL tool log, for reference only |
 
@@ -81,9 +82,12 @@ Only one tester may be on the K-line at a time: unplug the KKL when the Click is
 | Quirk | the ECU always sends the LEN byte of its first block twice; echo the repeat, don't store it |
 | Echo timing | 10–30 ms before each echo works; 0 ms is rejected |
 | ID blocks | type F6, ASCII reversed: 0261204478 / 1037357941 / 46525168 |
-| Battery | `01 01 00 36` → FE + 1 byte, × 0.1319 V (calibrated at 12.4 V) |
-| Coolant | `08 03` → FB + 2 bytes, polynomial on the low byte |
-| RPM | `01 02 00 3B` → FE + 2 bytes; formula **not verified** with a running engine |
+| Battery | `01 01 00 36` → FE + 1 byte, × 0.073 V (two in-car states, 164 raw at rest / 198 charging) |
+| RPM | `01 02 00 3B` → FE + 2 bytes: low byte × 10 up to 2550 rpm, then high byte × 40 |
+| Coolant | `08 03` → FB + 2 bytes, NTC polynomial on the low byte |
+| Air temp | `08 05` → FB + 2 bytes, the same NTC polynomial |
+| Air quantity | `08 04` → FB + 2 bytes, raw count (6 engine off, ~41 idle, ~70 at 3000 rpm) |
+| Other ADCs | 00 throttle, 07 lambda, 06 load-dependent but unidentified; 02/08/0B unused, 09/0A zero, 0C-0F absent |
 
 ## 3D-printed case
 
@@ -97,9 +101,10 @@ Print `case_clickfit.stl` and `case_fitcheck.stl` first; they check the fit in m
 
 ## Open items
 
-- RPM formula and a second battery calibration point, with the engine running.
+- The **kg/h scale for air quantity**: the display shows the raw count until there is something to calibrate it against.
+- **ADC 06** carries something that changes with load, still unidentified.
+- A **multimeter check on the battery scale**. The two in-car states agree on 0.073 V/step, but neither was measured directly; the sketch logs the raw byte for this.
 - The first request after the handshake always gets a NAK. It's harmless, but a short pause might avoid it.
-- Air temperature and air quantity have display cells but aren't requested from the ECU yet (air temp is probably ADC channel 02; the air quantity address is unknown).
 - The case is unprinted apart from the Click holder coupon. The terminal height under the Click (7.0 mm) and the pin height above it (8.0 mm) are estimates, and they set the case height.
 
 ## License

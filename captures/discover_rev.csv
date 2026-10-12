@@ -1,0 +1,49 @@
+time_s,pass,note,kind,key,type,type_name,data_hex
+0.38,1,idle then revving,known,battery,0A,NAK,06,6
+0.79,1,idle then revving,known,rpm,FE,,15 54,21,84
+1.14,1,idle then revving,known,coolant_adc3,FB,,00 3B,0,59
+1.49,1,idle then revving,known,airtemp_adc2?,FB,,00 FF,0,255
+1.78,1,idle then revving,known,dtc,FC,,00,0
+2.13,1,idle then revving,adc,00,FB,,00 17,0,23
+2.48,1,idle then revving,adc,01,FB,,00 C7,0,199
+2.83,1,idle then revving,adc,02,FB,,00 FF,0,255
+3.18,1,idle then revving,adc,03,FB,,00 3B,0,59
+3.53,1,idle then revving,adc,04,FB,,00 28,0,40
+3.86,1,idle then revving,adc,05,FB,,00 B4,0,180
+4.21,1,idle then revving,adc,06,FB,,00 58,0,88
+4.56,1,idle then revving,adc,07,FB,,00 9E,0,158
+4.91,1,idle then revving,adc,08,FB,,00 FE,0,254
+5.26,1,idle then revving,adc,09,FB,,00 00,0,0
+5.61,1,idle then revving,adc,0A,FB,,00 00,0,0
+5.96,1,idle then revving,adc,0B,FB,,00 FF,0,255
+6.25,1,idle then revving,adc,0C,09,ACK,
+6.54,1,idle then revving,adc,0D,09,ACK,
+6.84,1,idle then revving,adc,0E,09,ACK,
+7.11,1,idle then revving,adc,0F,09,ACK,
+7.49,2,idle then revving,known,battery,FE,,C8,200
+7.9,2,idle then revving,known,rpm,FE,,14 53,20,83
+8.25,2,idle then revving,known,coolant_adc3,FB,,00 3B,0,59
+8.6,2,idle then revving,known,airtemp_adc2?,FB,,00 FF,0,255
+8.89,2,idle then revving,known,dtc,FC,,00,0
+9.24,2,idle then revving,adc,00,FB,,00 17,0,23
+9.59,2,idle then revving,adc,01,FB,,00 C6,0,198
+9.94,2,idle then revving,adc,02,FB,,00 FF,0,255
+10.29,2,idle then revving,adc,03,FB,,00 3B,0,59
+10.64,2,idle then revving,adc,04,FB,,00 28,0,40
+10.97,2,idle then revving,adc,05,FB,,00 B4,0,180
+11.32,2,idle then revving,adc,06,FB,,00 44,0,68
+11.67,2,idle then revving,adc,07,FB,,00 98,0,152
+12.02,2,idle then revving,adc,08,FB,,00 FF,0,255
+12.37,2,idle then revving,adc,09,FB,,00 00,0,0
+12.72,2,idle then revving,adc,0A,FB,,00 00,0,0
+13.07,2,idle then revving,adc,0B,FB,,00 FF,0,255
+13.36,2,idle then revving,adc,0C,09,ACK,
+13.64,2,idle then revving,adc,0D,09,ACK,
+13.93,2,idle then revving,adc,0E,09,ACK,
+14.22,2,idle then revving,adc,0F,09,ACK,
+14.6,3,idle then revving,known,battery,FE,,C6,198
+15.01,3,idle then revving,known,rpm,FE,,4B FF,75,255
+15.36,3,idle then revving,known,coolant_adc3,FB,,00 3A,0,58
+15.71,3,idle then revving,known,airtemp_adc2?,FB,,00 FF,0,255
+16.0,3,idle then revving,known,dtc,FC,,00,0
+16.35,3,idle then revving,adc,00,FB,,00 17,0,23

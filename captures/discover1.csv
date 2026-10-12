@@ -1,0 +1,22 @@
+time_s,pass,note,kind,key,type,type_name,data_hex
+0.38,1,"first run, conditions unknown",known,battery,0A,NAK,06,6
+0.79,1,"first run, conditions unknown",known,rpm,FE,,14 52,20,82
+1.14,1,"first run, conditions unknown",known,coolant_adc3,FB,,00 43,0,67
+1.49,1,"first run, conditions unknown",known,airtemp_adc2?,FB,,00 FF,0,255
+1.78,1,"first run, conditions unknown",known,dtc,FC,,00,0
+2.13,1,"first run, conditions unknown",adc,00,FB,,00 17,0,23
+2.48,1,"first run, conditions unknown",adc,01,FB,,00 C5,0,197
+2.83,1,"first run, conditions unknown",adc,02,FB,,00 FF,0,255
+3.18,1,"first run, conditions unknown",adc,03,FB,,00 43,0,67
+3.53,1,"first run, conditions unknown",adc,04,FB,,00 2A,0,42
+3.88,1,"first run, conditions unknown",adc,05,FB,,00 B6,0,182
+4.23,1,"first run, conditions unknown",adc,06,FB,,00 3B,0,59
+4.58,1,"first run, conditions unknown",adc,07,FB,,00 9C,0,156
+4.93,1,"first run, conditions unknown",adc,08,FB,,00 FF,0,255
+5.28,1,"first run, conditions unknown",adc,09,FB,,00 00,0,0
+5.63,1,"first run, conditions unknown",adc,0A,FB,,00 00,0,0
+5.98,1,"first run, conditions unknown",adc,0B,FB,,00 FF,0,255
+6.27,1,"first run, conditions unknown",adc,0C,09,ACK,
+6.55,1,"first run, conditions unknown",adc,0D,09,ACK,
+6.84,1,"first run, conditions unknown",adc,0E,09,ACK,
+7.12,1,"first run, conditions unknown",adc,0F,09,ACK,

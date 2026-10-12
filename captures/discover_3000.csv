@@ -1,0 +1,105 @@
+time_s,pass,note,kind,key,type,type_name,data_hex
+0.38,1,steady 3000 rpm,known,battery,0A,NAK,06,6
+0.79,1,steady 3000 rpm,known,rpm,FE,,3C F3,60,243
+1.14,1,steady 3000 rpm,known,coolant_adc3,FB,,00 32,0,50
+1.51,1,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+1.8,1,steady 3000 rpm,known,dtc,FC,,00,0
+2.15,1,steady 3000 rpm,adc,00,FB,,00 28,0,40
+2.5,1,steady 3000 rpm,adc,01,FB,,00 C6,0,198
+2.85,1,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+3.2,1,steady 3000 rpm,adc,03,FB,,00 32,0,50
+3.55,1,steady 3000 rpm,adc,04,FB,,00 43,0,67
+3.9,1,steady 3000 rpm,adc,05,FB,,00 A3,0,163
+4.25,1,steady 3000 rpm,adc,06,FB,,00 4A,0,74
+4.58,1,steady 3000 rpm,adc,07,FB,,00 A7,0,167
+4.96,2,steady 3000 rpm,known,battery,FE,,C7,199
+5.37,2,steady 3000 rpm,known,rpm,FE,,48 FF,72,255
+5.72,2,steady 3000 rpm,known,coolant_adc3,FB,,00 31,0,49
+6.07,2,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+6.36,2,steady 3000 rpm,known,dtc,FC,,00,0
+6.71,2,steady 3000 rpm,adc,00,FB,,00 24,0,36
+7.06,2,steady 3000 rpm,adc,01,FB,,00 C6,0,198
+7.41,2,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+7.76,2,steady 3000 rpm,adc,03,FB,,00 31,0,49
+8.11,2,steady 3000 rpm,adc,04,FB,,00 48,0,72
+8.46,2,steady 3000 rpm,adc,05,FB,,00 A2,0,162
+8.81,2,steady 3000 rpm,adc,06,FB,,00 4A,0,74
+9.16,2,steady 3000 rpm,adc,07,FB,,00 A5,0,165
+9.54,3,steady 3000 rpm,known,battery,FE,,C6,198
+9.94,3,steady 3000 rpm,known,rpm,FE,,4B FF,75,255
+10.29,3,steady 3000 rpm,known,coolant_adc3,FB,,00 31,0,49
+10.64,3,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+10.92,3,steady 3000 rpm,known,dtc,FC,,00,0
+11.27,3,steady 3000 rpm,adc,00,FB,,00 24,0,36
+11.62,3,steady 3000 rpm,adc,01,FB,,00 C6,0,198
+11.97,3,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+12.32,3,steady 3000 rpm,adc,03,FB,,00 30,0,48
+12.67,3,steady 3000 rpm,adc,04,FB,,00 49,0,73
+13.02,3,steady 3000 rpm,adc,05,FB,,00 A2,0,162
+13.37,3,steady 3000 rpm,adc,06,FB,,00 2E,0,46
+13.72,3,steady 3000 rpm,adc,07,FB,,00 8F,0,143
+14.1,4,steady 3000 rpm,known,battery,FE,,C7,199
+14.52,4,steady 3000 rpm,known,rpm,FE,,4C FF,76,255
+14.87,4,steady 3000 rpm,known,coolant_adc3,FB,,00 30,0,48
+15.22,4,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+15.5,4,steady 3000 rpm,known,dtc,FC,,00,0
+15.85,4,steady 3000 rpm,adc,00,FB,,00 25,0,37
+16.2,4,steady 3000 rpm,adc,01,FB,,00 C6,0,198
+16.55,4,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+16.9,4,steady 3000 rpm,adc,03,FB,,00 2F,0,47
+17.25,4,steady 3000 rpm,adc,04,FB,,00 4A,0,74
+17.6,4,steady 3000 rpm,adc,05,FB,,00 A1,0,161
+17.95,4,steady 3000 rpm,adc,06,FB,,00 4B,0,75
+18.3,4,steady 3000 rpm,adc,07,FB,,00 13,0,19
+18.68,5,steady 3000 rpm,known,battery,FE,,C6,198
+19.08,5,steady 3000 rpm,known,rpm,FE,,4E FF,78,255
+19.43,5,steady 3000 rpm,known,coolant_adc3,FB,,00 2F,0,47
+19.78,5,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+20.06,5,steady 3000 rpm,known,dtc,FC,,00,0
+20.4,5,steady 3000 rpm,adc,00,FB,,00 25,0,37
+20.75,5,steady 3000 rpm,adc,01,FB,,00 C6,0,198
+21.09,5,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+21.44,5,steady 3000 rpm,adc,03,FB,,00 2F,0,47
+21.79,5,steady 3000 rpm,adc,04,FB,,00 4A,0,74
+22.14,5,steady 3000 rpm,adc,05,FB,,00 A0,0,160
+22.49,5,steady 3000 rpm,adc,06,FB,,00 32,0,50
+22.84,5,steady 3000 rpm,adc,07,FB,,00 53,0,83
+23.22,6,steady 3000 rpm,known,battery,FE,,C5,197
+23.64,6,steady 3000 rpm,known,rpm,FE,,4E FF,78,255
+23.98,6,steady 3000 rpm,known,coolant_adc3,FB,,00 2E,0,46
+24.33,6,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+24.62,6,steady 3000 rpm,known,dtc,FC,,00,0
+24.97,6,steady 3000 rpm,adc,00,FB,,00 25,0,37
+25.32,6,steady 3000 rpm,adc,01,FB,,00 C7,0,199
+25.67,6,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+26.02,6,steady 3000 rpm,adc,03,FB,,00 2E,0,46
+26.37,6,steady 3000 rpm,adc,04,FB,,00 49,0,73
+26.72,6,steady 3000 rpm,adc,05,FB,,00 A0,0,160
+27.07,6,steady 3000 rpm,adc,06,FB,,00 36,0,54
+27.41,6,steady 3000 rpm,adc,07,FB,,00 59,0,89
+27.8,7,steady 3000 rpm,known,battery,FE,,C6,198
+28.21,7,steady 3000 rpm,known,rpm,FE,,4F FF,79,255
+28.56,7,steady 3000 rpm,known,coolant_adc3,FB,,00 2D,0,45
+28.91,7,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+29.19,7,steady 3000 rpm,known,dtc,FC,,00,0
+29.54,7,steady 3000 rpm,adc,00,FB,,00 25,0,37
+29.89,7,steady 3000 rpm,adc,01,FB,,00 C6,0,198
+30.24,7,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+30.59,7,steady 3000 rpm,adc,03,FB,,00 2D,0,45
+30.94,7,steady 3000 rpm,adc,04,FB,,00 4A,0,74
+31.29,7,steady 3000 rpm,adc,05,FB,,00 9F,0,159
+31.64,7,steady 3000 rpm,adc,06,FB,,00 4D,0,77
+31.99,7,steady 3000 rpm,adc,07,FB,,00 A9,0,169
+32.37,8,steady 3000 rpm,known,battery,FE,,C6,198
+32.78,8,steady 3000 rpm,known,rpm,FE,,4F FF,79,255
+33.13,8,steady 3000 rpm,known,coolant_adc3,FB,,00 2C,0,44
+33.48,8,steady 3000 rpm,known,airtemp_adc2?,FB,,00 FF,0,255
+33.75,8,steady 3000 rpm,known,dtc,FC,,00,0
+34.1,8,steady 3000 rpm,adc,00,FB,,00 25,0,37
+34.45,8,steady 3000 rpm,adc,01,FB,,00 C4,0,196
+34.8,8,steady 3000 rpm,adc,02,FB,,00 FF,0,255
+35.15,8,steady 3000 rpm,adc,03,FB,,00 2C,0,44
+35.5,8,steady 3000 rpm,adc,04,FB,,00 4A,0,74
+35.85,8,steady 3000 rpm,adc,05,FB,,00 9F,0,159
+36.2,8,steady 3000 rpm,adc,06,FB,,00 44,0,68
+36.55,8,steady 3000 rpm,adc,07,FB,,00 26,0,38

@@ -359,18 +359,51 @@ How `readBlock()` handles a block (corrected 22 Sep 2026 from a raw trace on the
 
 Reply blocks are `[counter, type, data…, 03]`, so the first data byte is `blk[2]`. The Python formulas read one byte too far, which gave 0.21 V and 140 °C.
 
-| Value | Request | Reply | Decode | Shows | Check |
-| --- | --- | --- | --- | --- | --- |
-| Battery | `01 01 00 36` | type FE, 1 byte (`5E`) | `blk[2]` × 0.1319 V | 12.27 V | Calibrated: 94 steps at 12.4 V measured |
-| Coolant | `08 03` | type FB, 2 bytes (`00 BB`) | polynomial on `blk[3]` | 18.0 °C | About 20 °C room temperature |
-| RPM | `01 02 00 3B` | type FE, 2 bytes (`00 00`) | 0.2 × `blk[2]` × `blk[3]` | 0 | Engine off. Formula **not verified** |
+| Value | Request | Reply | Decode | Checked against |
+| --- | --- | --- | --- | --- |
+| Battery | `01 01 00 36` | type FE, 1 byte | `blk[2]` × 0.073 V | 164 raw with the ignition on, 197-200 running: 12.0 V and 14.4 V |
+| RPM | `01 02 00 3B` | type FE, 2 bytes | `blk[3]` × 10, or `blk[2]` × 40 once `blk[3]` hits FF | idle 20/82 → 800-820 rpm; a held 3000 rpm averaged 74.6 on `blk[2]` → 2984 rpm |
+| Coolant | `08 03` | type FB, 2 bytes | NTC polynomial on `blk[3]` | 202 raw cold → 10 °C; 44-51 raw hot → 91-96 °C |
+| Air temp | `08 05` | type FB, 2 bytes | the same NTC polynomial | 197 raw → 13 °C with a 14 °C ambient |
+| Air quantity | `08 04` | type FB, 2 bytes | `blk[3]` − 6, as a raw count | 6 engine off, ~41 idle, ~70 at 3000 rpm |
 
 The first request after the handshake always gets a NAK (type `0A`). It shows as `--`, and the next cycle gets data.
 
+### What the ECU answers: the ADC map
+
+Found on 12 Oct 2026 with [`tools/kwp71_discover.py`](../tools/kwp71_discover.py), by sweeping all 16 channels in five conditions (cold and engine off at 14 °C; ignition on with a pedal sweep; idle; idle to high idle; a held 3000 rpm) and diffing the runs. `08 <ch>` returns type FB and two bytes, high then low; everything useful is in the low byte.
+
+| Ch | What | Engine off | Idle | 3000 rpm | How it was identified |
+| --- | --- | --- | --- | --- | --- |
+| 00 | Throttle position | 23 | 23 | 36-40 | 23 → 209 during the pedal sweep with the engine off |
+| 01 | Battery | 164 | 197-200 | 198 | Identical to RAM `0036` in every run |
+| 03 | Coolant | 202 cold, 47 warm | 58-71 | 44-51 | Known; the NTC curve gives 10 °C cold and 91-96 °C hot |
+| 04 | Air quantity | 6 | 40-42 | 67-72 | Follows engine load, and does **not** move with the pedal while the engine is off |
+| 05 | Intake air temperature | 197 | 172-182 | 159-163 | 197 reads 13 °C on the coolant curve against a 14 °C ambient, and falls as the bay warms |
+| 06 | Unidentified | 131 | 68-88 | 46-75 | Changes with load, but nothing lines it up with a known quantity |
+| 07 | Lambda | 93 | 152-158 | 165-167 | Fixed with the engine off, rises and wanders with the engine running |
+| 02, 08, 0B | Unused inputs | 254-255 | 254-255 | 254-255 | Pinned at the pull-up in every state |
+| 09, 0A | Unused inputs | 0 | 0 | 0 | Always zero |
+| 0C-0F | Do not exist | no reply | no reply | no reply | No answer at all |
+
+The runs themselves are in `captures/`, and each row carries its condition in a `note` column:
+
+| File | Condition | Also holds |
+| --- | --- | --- |
+| `discover.csv` | cold, engine off, 14 °C ambient | a RAM sweep of `0000`-`00FF` |
+| `discover1.csv` | first run, warm idle | |
+| `discover_pedal.csv` | ignition on, engine off, pedal swept | the throttle channel moving on its own |
+| `discover_rev.csv` | idle, then revved | |
+| `discover_rev3.csv` | idle, high idle, idle | |
+| `discover_3000.csv` | a held 3000 rpm, 8 passes | the rpm calibration |
+
+Two things from the RAM sweep worth knowing: `0036` mirrors ADC 01, and `00D4`-`00FF` is all `AA`, so that end is unused.
+
 Still open:
 
-- RPM with the engine running.
-- A second battery point, about 14 V with the engine running.
+- The **kg/h scale for air quantity**. The idle and 3000 rpm counts suggest roughly 0.37 kg/h per count for a 2.0 litre engine, which is an expectation rather than a measurement, so the dashboard shows the raw count.
+- **ADC 06**, which clearly carries something load-dependent.
+- A **multimeter check on the battery scale**. The two in-car states agree on 0.073 V/step with no offset, but neither point was measured directly; the sketch logs the raw byte as `[BATT] raw …` for exactly this.
 - A short pause after the handshake, to avoid the first NAK.
 
 ## Dashboard on the CYD screen
@@ -398,8 +431,8 @@ The CYD's screen shows a live dashboard: an rpm gauge, four values in a 2 × 2 g
 | Value grid | right: 2 × 2 cells of 74 × 84 px from (164, 30) | title, unit centred below it, then the value | per value, see below |
 |  Battery (top left) |  | volts, 2 decimals | red < 11.8, yellow < 12.2, green ≤ 14.8, red above |
 |  Coolant (top right) |  | °C, 1 decimal | light blue < 60, green 60–105, red > 105 |
-|  Air temp (bottom left) |  | °C, 1 decimal | light blue < 5, green 5–60, red > 60 |
-|  Air quantity (bottom right) |  | kg/h, whole numbers. **Not requested from the ECU yet**, so it stays `--` | white |
+|  Air temp (bottom left) |  | °C, 1 decimal, from ADC 05 | light blue < 5, green 5–60, red > 60 |
+|  Air quantity (bottom right) |  | raw count above no-flow, from ADC 04. Labelled `raw`, not `kg/h`, because the scale is unknown | white |
 | Bottom line | 214–240 px | the ID numbers once connected; before that, the latest step | grey / the step's colour |
 
 `--` means there's no value yet, for example before the first reading, or after the ECU's first-request NAK.
@@ -416,7 +449,8 @@ The CYD's screen shows a live dashboard: an rpm gauge, four values in a 2 × 2 g
 
 ### How the values update
 
-- **Polling:** one request/reply at a time, with no pauses; the requests themselves keep the session alive. Of every 10 exchanges, 8 read rpm, #4 reads battery and #9 reads coolant. A reply that doesn't decode keeps the previous value. Expected rate: about **3–4 new rpm values per second**, from about 13 bytes per exchange at 10 ms echo delay. That's an estimate, not measured yet.
+- **Polling:** one request/reply at a time, with no pauses; the requests themselves keep the session alive. Of every 10 exchanges, 6 read rpm and one each reads battery (#1), coolant (#3), air temp (#5) and air quantity (#7); the summary log line goes out on #9. Rpm keeps the majority of the slots because it is the only value that moves fast.
+- **Slower values:** battery, coolant, air temp and air quantity each refresh about every 3 s. That is far more often than any of them actually changes. A reply that doesn't decode keeps the previous value. Expected rate: about **3–4 new rpm values per second**, from about 13 bytes per exchange at 10 ms echo delay. That's an estimate, not measured yet.
 - **Two cores:** the K-line code runs in `loop()` on core 1. The screen is drawn only by `dashTask` on core 0, at about 25 frames per second. The K-line code just hands over numbers (plain variables) and texts (through a lock, a mutex), so drawing can never delay a K-line echo.
 - **Smooth gauge:** every frame, the gauge moves 30% of the remaining distance to the latest reading (`RPM_SMOOTHING`), reaching about 90% within about 0.3 s. So the bar glides instead of jumping between readings.
 - **No flicker:** the arc only redraws the part that changed, and numbers overwrite themselves in place.
@@ -460,7 +494,8 @@ Set `#define DEMO_MODE 1` and upload to check the screen without an ECU.
 - **RPM:** sweeps from 800 to 7600 and back every 8 s.
 - **Battery:** 12.4 V at idle, about 14.1 V above 1000 rpm.
 - **Coolant:** warms from 20 to 90 °C in a minute.
-- **Air temp:** rises from 20 to 38 °C; **air quantity** follows the rpm as a stand-in.
+- **Air temp:** rises from 20 to 38 °C.
+- **Air quantity:** follows the rpm, scaled to the counts the car gives: about 7 with the engine off, 40 at idle and 75 at 3000 rpm.
 - **Screen:** shows the ECU's real ID numbers, and the status says **DEMO**.
 
 Values are fed every 300 ms, about the real update rate, so it also shows how the smoothing will look. Set it back to `0` for the ECU; in demo mode the ESP32 never touches the K-line.

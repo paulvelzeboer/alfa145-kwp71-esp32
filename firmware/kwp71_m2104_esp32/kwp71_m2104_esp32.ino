@@ -101,6 +101,40 @@ TFT_eSPI tft = TFT_eSPI();
 unsigned long echoDelayMs = ECHO_DELAY_MS;
 #define SELF_ECHO_TIMEOUT_MS 50 // our own byte loops back through the L9637 within ~1 byte time
 
+// Battery: the ECU's scaled value, one byte, no offset. 0.073 V per step is a
+// two-point fit from the discovery runs of 12 Oct 2026, where the raw byte was
+// 164-165 with the ignition on and the engine off, and 197-200 with the engine
+// running: 12.0 V and 14.5 V, which is a battery at rest and an alternator
+// charging. The ratio between the two states (1.20) matches a plain
+// proportional scale, so there is no offset term.
+// An earlier single point (raw 94 at a measured 12.4 V, 22 Sep 2026) gave 0.1319
+// and read 26 V on the car; raw 94 would be 6.9 V here, so that sample was
+// almost certainly taken before the reply byte index was fixed. Still worth
+// confirming once against a multimeter - the [BATT] log line prints the raw.
+#define BATT_SCALE  0.0730f
+#define BATT_OFFSET 0.0f
+#define BATT_MIN_PLAUSIBLE 6.0f   // outside this range the log flags the reading
+#define BATT_MAX_PLAUSIBLE 16.0f
+
+// ADC channels, identified with tools/kwp71_discover.py on 12 Oct 2026 by
+// sweeping all 16 channels in different engine states:
+//   00 throttle (23 closed, 209 pressed)   01 battery (same value as RAM 0036)
+//   03 coolant                             04 air quantity
+//   05 intake air temperature              07 lambda (rises with load)
+//   06 changes with load, not identified yet.
+//   02, 08 and 0B sit at 254-255 and 09, 0A at 0: unused inputs. 0C-0F do not
+//   answer at all.
+#define ADC_COOLANT 0x03
+#define ADC_AIRQTY  0x04
+#define ADC_AIRTEMP 0x05
+// Air quantity is a raw count: 6 with the engine off, ~41 at idle, ~70 at
+// 3000 rpm. AIRQ_ZERO is the no-flow reading; set AIRQ_SCALE once there is
+// something to calibrate kg/h against, and change the cell's label from "raw".
+// (For a 2.0 litre engine the idle and 3000 rpm points suggest roughly
+// 0.37 kg/h per count, but that is an expectation, not a measurement.)
+#define AIRQ_ZERO  6
+#define AIRQ_SCALE 1.0f
+
 #define INFO_BLOCKS   2      // number of ECU info blocks expected during init
 #define MAX_BLOCK_LEN 64
 #define BLOCK_SLACK   4      // safety cap above LEN while scanning for EOB
@@ -293,8 +327,8 @@ void dashFrame() {
     if (i == CELL_BATT) {
       drawText("V", ux, y + 22, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
     } else if (i == CELL_AIRQ) {
-      // kg/h as requested; the ECU's scaling for this value is not verified yet
-      drawText("kg/h", ux, y + 22, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
+      // raw ADC count for now: the ECU's kg/h scaling is unknown (AIRQ_SCALE)
+      drawText("raw", ux, y + 22, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
     } else {                                   // degree sign: built-in fonts have none
       tft.drawCircle(ux - 2, y + 19, 2, COL_LABEL);
       drawText("C", ux + 5, y + 22, MC_DATUM, 1, COL_LABEL, COL_BG, 0);
@@ -883,45 +917,70 @@ bool requestParam(const uint8_t *payload, int payloadLen, const char *label,
 // previous reading. Returns false after the first failed exchange.
 unsigned long pollN = 0;
 int   lastRpm = -1;
-float lastBatt = -1, lastCool = -1000;
+float lastBatt = -1, lastCool = -1000, lastAirT = -1000, lastAirQ = -1;
+
+// NTC sensor curve, from the Python tool's coolant formula; the ECU returns a
+// raw ADC count that FALLS as the sensor gets hotter.
+float ntcTemp(int raw) {
+  float x = raw;
+  return -0.000014482f * x * x * x + 0.006319247f * x * x - 1.35140625f * x + 144.4095455f;
+}
 
 bool pollAndDisplayParams() {
   uint8_t battReq[] = {0x01, 0x01, 0x00, 0x36};
   uint8_t rpmReq[]  = {0x01, 0x02, 0x00, 0x3B};
-  uint8_t coolReq[] = {0x08, 0x03};
+  uint8_t coolReq[] = {0x08, ADC_COOLANT};
+  uint8_t airTReq[] = {0x08, ADC_AIRTEMP};
+  uint8_t airQReq[] = {0x08, ADC_AIRQTY};
 
   uint8_t blk[MAX_BLOCK_LEN];
   int len;
   int slot = pollN++ % 10;
 
-  if (slot == 4) {
+  if (slot == 1) {
     if (!requestParam(battReq, sizeof(battReq), "BATTERY", blk, &len)) return false;
     // Reply layout: [counter, type, data..., 03] - first data byte is blk[2].
-    // Battery: RAM read -> type 0xFE + 1 byte. Calibrated 22 Sep 2026 on the
-    // bench: 0x5E (94) at 12.4 V -> 0.1319 V per step (~0.13 V resolution).
-    if (len >= 4 && blk[1] == 0xFE) lastBatt = blk[2] * 0.1319f;
-  } else if (slot == 9) {
+    if (len >= 4 && blk[1] == 0xFE) {
+      lastBatt = blk[2] * BATT_SCALE + BATT_OFFSET;
+      dbg("  [BATT] raw 0x" + String(blk[2], HEX) + " (" + String(blk[2]) + ") -> " +
+          String(lastBatt, 2) + " V" +
+          (lastBatt < BATT_MIN_PLAUSIBLE || lastBatt > BATT_MAX_PLAUSIBLE
+               ? "  !! outside 6-16 V: wrong byte or wrong scale" : ""));
+    }
+  } else if (slot == 3) {
     if (!requestParam(coolReq, sizeof(coolReq), "COOLANT", blk, &len)) return false;
-    // Coolant: ADC read -> type 0xFB + 2 bytes (hi, lo); the formula uses the
-    // low byte. 0x00BB gave ~18 C at ~20 C room temperature (22 Sep 2026).
+    // ADC read -> type 0xFB + 2 bytes (hi, lo); the formula uses the low byte.
+    if (len >= 5 && blk[1] == 0xFB) lastCool = ntcTemp(blk[3]);
+  } else if (slot == 5) {
+    if (!requestParam(airTReq, sizeof(airTReq), "AIRTEMP", blk, &len)) return false;
+    // Same NTC curve as coolant, and the cold run confirms it: raw 197 with a
+    // 14 C ambient reads 13 C. It drops as the engine bay warms (156 -> 32 C).
+    if (len >= 5 && blk[1] == 0xFB) lastAirT = ntcTemp(blk[3]);
+  } else if (slot == 7) {
+    if (!requestParam(airQReq, sizeof(airQReq), "AIRQTY", blk, &len)) return false;
     if (len >= 5 && blk[1] == 0xFB) {
-      float x = blk[3];
-      lastCool = -0.000014482f * x * x * x + 0.006319247f * x * x - 1.35140625f * x + 144.4095455f;
+      int raw = blk[3] - AIRQ_ZERO;
+      lastAirQ = (raw < 0 ? 0 : raw) * AIRQ_SCALE;
     }
   } else {
     if (!requestParam(rpmReq, sizeof(rpmReq), "RPM", blk, &len)) return false;
-    // RPM: RAM read -> type 0xFE + 2 bytes. Reads 00 00 with the engine off;
-    // the formula (from the Python tool) is NOT verified with a running engine.
-    if (len >= 5 && blk[1] == 0xFE) lastRpm = (int)(0.2f * blk[2] * blk[3]);
+    // RPM: RAM read -> type 0xFE + 2 bytes, both counting the same speed at
+    // different resolutions (discovery runs, 12 Oct 2026):
+    //   blk[3] = rpm / 10, which saturates at 0xFF = 2550 rpm
+    //   blk[2] = rpm / 40, which carries on past that
+    // Idle read 20 / 82 (800 / 820 rpm) and a held 3000 rpm averaged 74.6 on
+    // blk[2] (2984 rpm). Both read 00 00 with the engine off.
+    if (len >= 5 && blk[1] == 0xFE)
+      lastRpm = blk[3] < 0xFF ? blk[3] * 10 : blk[2] * 40;
   }
-  // TODO: air temp (ADC channel 02 in the Python tool) and air quantity (RAM
-  // address unknown) aren't requested yet - the cells show "--" until they are.
-  dashValues(lastBatt, lastRpm, lastCool, -1000, -1);
+  dashValues(lastBatt, lastRpm, lastCool, lastAirT, lastAirQ);
 
   if (slot == 9) {                   // one summary line per 10 exchanges
     String line = "Batt: " + (lastBatt > -1 ? String(lastBatt, 2) + "V" : String("--"));
     line += "  RPM: " + (lastRpm >= 0 ? String(lastRpm) : String("--"));
     line += "  Cool: " + (lastCool > -999 ? String(lastCool, 1) + "C" : String("--"));
+    line += "  AirT: " + (lastAirT > -999 ? String(lastAirT, 1) + "C" : String("--"));
+    line += "  AirQ: " + (lastAirQ >= 0 ? String(lastAirQ, 0) : String("--"));
     logLine(line, TFT_WHITE);
   }
   return true;
@@ -983,7 +1042,7 @@ void demoStep() {
   if (warm > 1.0f) warm = 1.0f;
   float coolantC = 20.0f + 70.0f * warm + (warm >= 1.0f ? 1.5f * sin(t / 5.0f) : 0.0f);
   float airT = 20.0f + 18.0f * warm + 0.8f * sin(t / 3.0f);
-  float airQ = rpm / 40.0f;                     // stand-in: load roughly follows rpm
+  float airQ = 7 + rpm / 45.0f;                 // stand-in: ~7 off, ~40 idle, ~75 at 3000
   dashValues(battV, rpm, coolantC, airT, airQ);
   delay(300);                        // ~ the real rpm update rate; the display
                                      // task animates in between
@@ -1027,7 +1086,7 @@ void loop() {
             " - reconnecting", TFT_RED);
     ecuConnected = false;
     dashStatus("RECONNECTING", TFT_ORANGE);
-    lastRpm = -1; lastBatt = -1; lastCool = -1000;
+    lastRpm = -1; lastBatt = -1; lastCool = -1000; lastAirT = -1000; lastAirQ = -1;
     dashValues(-1, -1, -1000, -1000, -1);
     lastAttempt = millis();
     return;

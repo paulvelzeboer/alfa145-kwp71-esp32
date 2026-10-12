@@ -1,0 +1,131 @@
+time_s,pass,note,kind,key,type,type_name,data_hex
+0.38,1,"engine off, ignition on, pedal sweep",known,battery,0A,NAK,06,6
+0.79,1,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+1.14,1,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+1.49,1,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+1.78,1,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+2.13,1,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+2.48,1,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A5,0,165
+2.83,1,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+3.18,1,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+3.53,1,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+3.88,1,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+4.23,1,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+4.58,1,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+4.96,2,"engine off, ignition on, pedal sweep",known,battery,FE,,A5,165
+5.37,2,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+5.72,2,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+6.06,2,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+6.34,2,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+6.69,2,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+7.04,2,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A5,0,165
+7.39,2,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+7.73,2,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+8.08,2,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+8.43,2,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+8.78,2,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+9.13,2,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+9.51,3,"engine off, ignition on, pedal sweep",known,battery,FE,,A5,165
+9.92,3,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+10.27,3,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+10.62,3,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+10.91,3,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+11.26,3,"engine off, ignition on, pedal sweep",adc,00,FB,,00 D1,0,209
+11.61,3,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A5,0,165
+11.96,3,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+12.31,3,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+12.66,3,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+13.01,3,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+13.36,3,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+13.71,3,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+14.09,4,"engine off, ignition on, pedal sweep",known,battery,FE,,A5,165
+14.5,4,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+14.85,4,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+15.2,4,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+15.49,4,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+15.84,4,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+16.19,4,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A4,0,164
+16.54,4,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+16.89,4,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+17.24,4,"engine off, ignition on, pedal sweep",adc,04,FB,,00 06,0,6
+17.59,4,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+17.94,4,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+18.29,4,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+18.67,5,"engine off, ignition on, pedal sweep",known,battery,FE,,A4,164
+19.08,5,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+19.43,5,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+19.78,5,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+20.07,5,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+20.42,5,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+20.77,5,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A4,0,164
+21.12,5,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+21.47,5,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+21.82,5,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+22.17,5,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+22.52,5,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+22.87,5,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+23.25,6,"engine off, ignition on, pedal sweep",known,battery,FE,,A4,164
+23.66,6,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+24.01,6,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+24.36,6,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+24.65,6,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+25.0,6,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+25.35,6,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A4,0,164
+25.7,6,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+26.05,6,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+26.4,6,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+26.75,6,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+27.1,6,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+27.45,6,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+27.83,7,"engine off, ignition on, pedal sweep",known,battery,FE,,A4,164
+28.24,7,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+28.59,7,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+28.92,7,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+29.21,7,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+29.56,7,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+29.91,7,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A4,0,164
+30.24,7,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+30.59,7,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+30.94,7,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+31.29,7,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+31.64,7,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+31.99,7,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+32.37,8,"engine off, ignition on, pedal sweep",known,battery,FE,,A4,164
+32.79,8,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+33.14,8,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 2F,0,47
+33.49,8,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+33.77,8,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+34.12,8,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+34.47,8,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A4,0,164
+34.82,8,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+35.17,8,"engine off, ignition on, pedal sweep",adc,03,FB,,00 2F,0,47
+35.52,8,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+35.87,8,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+36.22,8,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+36.57,8,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+36.95,9,"engine off, ignition on, pedal sweep",known,battery,FE,,A4,164
+37.37,9,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+37.72,9,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 30,0,48
+38.07,9,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+38.35,9,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+38.7,9,"engine off, ignition on, pedal sweep",adc,00,FB,,00 17,0,23
+39.05,9,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A4,0,164
+39.4,9,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+39.75,9,"engine off, ignition on, pedal sweep",adc,03,FB,,00 30,0,48
+40.1,9,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+40.45,9,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+40.8,9,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+41.15,9,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93
+41.53,10,"engine off, ignition on, pedal sweep",known,battery,FE,,A4,164
+41.95,10,"engine off, ignition on, pedal sweep",known,rpm,FE,,00 00,0,0
+42.3,10,"engine off, ignition on, pedal sweep",known,coolant_adc3,FB,,00 30,0,48
+42.65,10,"engine off, ignition on, pedal sweep",known,airtemp_adc2?,FB,,00 FE,0,254
+42.93,10,"engine off, ignition on, pedal sweep",known,dtc,FC,,00,0
+43.28,10,"engine off, ignition on, pedal sweep",adc,00,FB,,00 18,0,24
+43.63,10,"engine off, ignition on, pedal sweep",adc,01,FB,,00 A4,0,164
+43.98,10,"engine off, ignition on, pedal sweep",adc,02,FB,,00 FE,0,254
+48.61,10,"engine off, ignition on, pedal sweep",adc,03,0A,NAK,06,6
+48.94,10,"engine off, ignition on, pedal sweep",adc,04,FB,,00 07,0,7
+49.29,10,"engine off, ignition on, pedal sweep",adc,05,FB,,00 9C,0,156
+49.64,10,"engine off, ignition on, pedal sweep",adc,06,FB,,00 74,0,116
+49.99,10,"engine off, ignition on, pedal sweep",adc,07,FB,,00 5D,0,93

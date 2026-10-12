@@ -123,7 +123,8 @@ MAX_LEN_REPEATS = 3  # how often the ECU may re-send a block's LEN byte because 
 REQ = {
     "nop":     bytes([0x09]),                     # ACK / keep-alive
     "batadc":  bytes([0x08, 0x01]),               # ADC1 battery voltage raw
-    "airtemp": bytes([0x08, 0x02]),               # ADC2 air temp raw
+    "airtemp": bytes([0x08, 0x05]),               # ADC5 intake air temperature
+    "airqty": bytes([0x08, 0x04]),                # ADC4 air quantity
     "coolant": bytes([0x08, 0x03]),               # ADC3 water temp raw
     "battery": bytes([0x01, 0x01, 0x00, 0x36]),     # scaled battery voltage
     "rpm":     bytes([0x01, 0x02, 0x00, 0x3B]),     # engine speed
@@ -692,7 +693,8 @@ def describe_block(b: bytes):
 MENU = """Commands:
   battery    battery voltage (scaled)
   batadc     battery ADC raw
-  coolant    water temp                 airtemp    air temp ADC
+  coolant    water temp                 airtemp    intake air temp (ADC 05)
+  airqty     air quantity (ADC 04)
   rpm        engine speed
   dtc        DTC list
   nop        keep-alive / ACK
@@ -705,19 +707,29 @@ MENU = """Commands:
 
 def decode(cmd, blk):
     # blk = [counter, type, data..., 03]: the first data byte is blk[2].
-    # Battery calibrated 22 Sep 2026: 0x5E (94) at 12.4 V -> 0.1319 V/step.
+    # Battery: 0.073 V/step, two-point fit from the 12 Oct 2026 discovery runs
+    # (raw 164 ignition on / 197 engine running -> 12.0 / 14.4 V).
     if cmd == "battery" and len(blk) >= 4 and blk[1] == 0xFE:
-        print("  battery: %.2f V" % (blk[2] * 0.1319))
+        print("  battery: %.2f V  (raw %d)" % (blk[2] * 0.0730, blk[2]))
     elif cmd == "rpm" and len(blk) >= 5 and blk[1] == 0xFE:
-        print("  rpm: %d  (formula not verified with a running engine)" % int(0.2 * blk[2] * blk[3]))
+        # Two resolutions of the same speed: blk[3] = rpm/10 and saturates at
+        # 2550 rpm, blk[2] = rpm/40 and carries on.
+        rpm = blk[3] * 10 if blk[3] < 0xFF else blk[2] * 40
+        print("  rpm: %d  (raw %02X %02X)" % (rpm, blk[2], blk[3]))
     elif cmd == "coolant" and len(blk) >= 5 and blk[1] == 0xFB:
         x = blk[3]
         c = -0.000014482 * x**3 + 0.006319247 * x**2 - 1.35140625 * x + 144.4095455
         print("  coolant: %.1f C" % c)
     elif cmd == "airtemp" and len(blk) >= 5 and blk[1] == 0xFB:
+        # ADC 05, same NTC curve as the coolant sensor: raw 197 read 13 C with a
+        # 14 C ambient during the cold run of 12 Oct 2026.
         x = blk[3]
-        c = -2.01389e-05 * x**3 + 0.008784722 * x**2 - 1.676875 * x + 156.74375
-        print("  air temp: %.1f C" % c)
+        c = -0.000014482 * x**3 + 0.006319247 * x**2 - 1.35140625 * x + 144.4095455
+        print("  air temp: %.1f C  (raw %d)" % (c, x))
+    elif cmd == "airqty" and len(blk) >= 5 and blk[1] == 0xFB:
+        # ADC 04, raw count: 6 engine off, ~41 idle, ~70 at 3000 rpm. No kg/h
+        # scale yet, so show the count above the no-flow reading.
+        print("  air quantity: %d above no-flow  (raw %d)" % (max(0, blk[3] - 6), blk[3]))
     elif cmd == "dtc" and len(blk) > 0:
         print("  DTC data: %s" % hexs(bytes(blk[:-1])))
 
