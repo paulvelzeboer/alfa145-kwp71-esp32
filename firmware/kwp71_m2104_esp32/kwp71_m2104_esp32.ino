@@ -864,6 +864,18 @@ void dashValues(float battV, int rpm, float coolantC, float airT, float airQ) {
   shCool = coolantC;
   shAirT = airT;
   shAirQ = airQ;
+  // The session extremes live here because this is the single funnel both the
+  // poller and demo mode pass values through. Tracking them at each decode
+  // instead meant demo mode never filled them, so page 2 showed "--".
+  if (battV >= 0) {
+    if (battV < minBattSeen) minBattSeen = battV;
+    if (battV > maxBattSeen) maxBattSeen = battV;
+  }
+  if (coolantC > -999) {
+    if (coolantC < minCoolSeen) minCoolSeen = coolantC;
+    if (coolantC > maxCoolSeen) maxCoolSeen = coolantC;
+  }
+  if (rpm > maxRpmSeen) maxRpmSeen = rpm;
 }
 
 void drawCell(int i, const String &txt, uint16_t color) {
@@ -1562,6 +1574,19 @@ unsigned long pollN = 0;
 int   lastRpm = -1;
 float lastBatt = -1, lastCool = -1000, lastAirT = -1000, lastAirQ = -1;
 
+// Raw count that would read as this temperature: the NTC curve run backwards by
+// searching it, so demo mode cannot drift from the real formula the way a second
+// hand-written polynomial would. Only used by demo mode.
+int ntcRaw(float c) {
+  int best = 0;
+  float err = 1e9;
+  for (int raw = 0; raw < 256; raw++) {
+    float d = fabsf(ntcTemp(raw) - c);
+    if (d < err) { err = d; best = raw; }
+  }
+  return best;
+}
+
 // NTC sensor curve, from the Python tool's coolant formula; the ECU returns a
 // raw ADC count that FALLS as the sensor gets hotter.
 float ntcTemp(int raw) {
@@ -1617,8 +1642,6 @@ bool pollAndDisplayParams() {
     // Reply layout: [counter, type, data..., 03] - first data byte is blk[2].
     if (len >= 4 && blk[1] == 0xFE) {
       lastBatt = blk[2] * BATT_SCALE + BATT_OFFSET;
-      if (lastBatt < minBattSeen) minBattSeen = lastBatt;
-      if (lastBatt > maxBattSeen) maxBattSeen = lastBatt;
       dbg("  [BATT] raw 0x" + String(blk[2], HEX) + " (" + String(blk[2]) + ") -> " +
           String(lastBatt, 2) + " V" +
           (lastBatt < BATT_MIN_PLAUSIBLE || lastBatt > BATT_MAX_PLAUSIBLE
@@ -1627,11 +1650,7 @@ bool pollAndDisplayParams() {
   } else if (slot == 3) {
     if (!requestParam(coolReq, sizeof(coolReq), "COOLANT", blk, &len)) return false;
     // ADC read -> type 0xFB + 2 bytes (hi, lo); the formula uses the low byte.
-    if (len >= 5 && blk[1] == 0xFB) {
-      lastCool = ntcTemp(blk[3]);
-      if (lastCool < minCoolSeen) minCoolSeen = lastCool;
-      if (lastCool > maxCoolSeen) maxCoolSeen = lastCool;
-    }
+    if (len >= 5 && blk[1] == 0xFB) lastCool = ntcTemp(blk[3]);
   } else if (slot == 5) {
     if (!requestParam(airTReq, sizeof(airTReq), "AIRTEMP", blk, &len)) return false;
     // Same NTC curve as coolant, and the cold run confirms it: raw 197 with a
@@ -1651,10 +1670,8 @@ bool pollAndDisplayParams() {
     //   blk[2] = rpm / 40, which carries on past that
     // Idle read 20 / 82 (800 / 820 rpm) and a held 3000 rpm averaged 74.6 on
     // blk[2] (2984 rpm). Both read 00 00 with the engine off.
-    if (len >= 5 && blk[1] == 0xFE) {
+    if (len >= 5 && blk[1] == 0xFE)
       lastRpm = blk[3] < 0xFF ? blk[3] * 10 : blk[2] * 40;
-      if (lastRpm > maxRpmSeen) maxRpmSeen = lastRpm;
-    }
   }
   dashValues(lastBatt, lastRpm, lastCool, lastAirT, lastAirQ);   // store only
 
@@ -1738,8 +1755,45 @@ void demoStep() {
   if (warm > 1.0f) warm = 1.0f;
   float coolantC = 20.0f + 70.0f * warm + (warm >= 1.0f ? 1.5f * sin(t / 5.0f) : 0.0f);
   float airT = 20.0f + 18.0f * warm + 0.8f * sin(t / 3.0f);
-  float airQ = 7 + rpm / 45.0f;                 // stand-in: ~7 off, ~40 idle, ~75 at 3000
+  // Air flow rises with the square root of engine speed here, which is what
+  // fits the measured counts: 41 at idle and ~70 at 3000, not a straight line.
+  float airQ = 1.2f * sqrtf(rpm);
   dashValues(battV, rpm, coolantC, airT, airQ);
+
+  // Page 2 as well, so the diagnostics page can be judged without an ECU. The
+  // numbers are the real relationships where they are known, and the measured
+  // idle values from the discovery runs where the channel is unidentified or
+  // unused - see the ADC map in the docs.
+  // Each formula is fitted to the measured channel, not invented: with the
+  // engine idling the car reads throttle 23, air quantity 41, channel 06 68-88
+  // and lambda 152-158, and at 3000 rpm 36-40 / 67-72 / 46-75 / 165-167. These
+  // land inside all eight of those. Lambda sits at 93 with the engine stopped,
+  // which demo never shows, because it always has the engine running.
+  adcRaw[0x00] = 23 + (uint8_t)(40.0f * rpm / RPM_MAX);    // throttle, 23 shut
+  adcRaw[0x01] = (uint8_t)(battV / BATT_SCALE);            // battery
+  adcRaw[0x02] = 254;                                      // unused input
+  adcRaw[ADC_COOLANT] = ntcRaw(coolantC);
+  adcRaw[ADC_AIRQTY]  = AIRQ_ZERO + (uint8_t)airQ;
+  adcRaw[ADC_AIRTEMP] = ntcRaw(airT);
+  adcRaw[0x06] = 50 + (uint8_t)(81.0f * expf(-rpm / 700.0f));   // unidentified
+  adcRaw[0x07] = 155 + (uint8_t)(10.0f * rpm / RPM_MAX) + (int)(5 * sin(t * 4));
+  adcRaw[0x08] = 255;
+  adcRaw[0x09] = 0;
+  adcRaw[0x0A] = 0;
+  adcRaw[0x0B] = 255;
+  adcSeen = (1 << ADC_SWEEP_N) - 1;
+
+  // Faults: mostly none stored, which is what the real ECU returns, but a fake
+  // code for 6 s of every 24 so the red branch is visible too. That branch has
+  // never run against a car, since this one has no faults.
+  if (fmodf(t, 24.0f) < 18.0f) {
+    adcDtc[0] = 0x00;
+    adcDtcLen = 1;
+  } else {
+    adcDtc[0] = 0x01; adcDtc[1] = 0x23; adcDtc[2] = 0x45;
+    adcDtcLen = 3;
+  }
+
   delay(300);                        // ~ the real rpm update rate; the display
                                      // task animates in between
 }

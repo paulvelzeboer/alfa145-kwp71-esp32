@@ -659,8 +659,37 @@ Set `#define DEMO_MODE 1` and upload to check the screen without an ECU.
 - **Coolant:** warms from 20 to 90 °C in a minute.
 - **Air temp:** rises from 20 to 38 °C.
 - **Symbols and animation:** all of it runs, so demo mode is the way to judge the look — the sweep crosses every colour zone, so the red tip flash, `Shift!` and the peak tick all appear.
-- **Air quantity:** follows the rpm, scaled to the counts the car gives: about 7 with the engine off, 40 at idle and 75 at 3000 rpm.
+- **Air quantity:** `1.2 × √rpm`, which is the shape the measured counts have — 41 at idle and about 70 at 3000 is not a straight line.
 - **Screen:** shows the ECU's real ID numbers, and the status says **DEMO**.
+
+**Page 2 is filled in too**, so the diagnostics page can be judged without an ECU:
+
+| Channel | Demo at idle | Demo at 3000 | Measured on the car |
+| --- | --- | --- | --- |
+| 00 throttle | 27 | 38 | 23 shut, 36–40 at 3000 |
+| 04 air quantity | 39 | 71 | 41 idle, 67–72 at 3000 |
+| 06 unidentified | 75 | 51 | 68–88 idle, 46–75 at 3000 |
+| 07 lambda | 156 | 158 | 152–158 idle, 165–167 at 3000 |
+
+Every one of those is **fitted to the discovery runs**, not invented, and lands
+inside all eight measured ranges. Channels 01, 03 and 05 are derived from the
+demo's own battery and temperatures, 02/08/0B sit at their real 254–255 and
+09/0A at 0. The two temperatures use `ntcRaw()`, which finds the count by
+searching the real `ntcTemp()` curve rather than using a second hand-written
+polynomial that could drift from it; it round-trips to within 0.09 °C.
+
+One deliberate inaccuracy: lambda reads 93 on the car with the engine stopped,
+which demo never shows, because demo always has the engine running.
+
+**The fault line cycles both states** — `none stored` in green for 18 s, then a
+fake `01 23 45` in red for 6 s. That red branch has never run against the car,
+which has no faults, so demo is the only way to see it on the device itself
+(`tools/m2104_sim.py --fault` is the other, over the K-line).
+
+**Session extremes** fill in as well. They are tracked in `dashValues()`, the one
+funnel both the poller and demo pass values through; while they were tracked at
+each decode inside the poller instead, demo mode never filled them and page 2
+showed `--`.
 
 Values are fed every 300 ms, about the real update rate, so it also shows how the smoothing will look. Set it back to `0` for the ECU; in demo mode the ESP32 never touches the K-line.
 
