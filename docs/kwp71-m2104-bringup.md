@@ -409,6 +409,9 @@ Still open:
 
 ## Dashboard on the CYD screen
 
+**There are two pages, and a tap anywhere switches between them.** Page 1 is the
+dashboard below; page 2 is the diagnostics page further down.
+
 The CYD's screen shows a live dashboard: an L-shaped rpm bar wrapping four values in a 2 × 2 grid, each with its own symbol, plus the connection status and the ECU's ID numbers. A boot splash shows the car badge for 5 s first. The detailed log stays on the Serial Monitor at 115200 baud. The layout was confirmed in demo mode on 22 Sep 2026, and the whole dashboard, smoother polling included, ran against the car on 12 Oct 2026.
 
 ```text
@@ -436,6 +439,7 @@ air, and three airflow arrows.
 | --- | --- | --- | --- |
 | Status bar | top, 0–24 px | car badge (20 px), "ALFA 145 QV", and the connection status on the right | see the status table |
 | RPM bar | an L: bottom leg x 6–314 at y 190–204, then up the right edge x 300–314 from y 190 to y 30, 14 px thick | 0–4000 along the bottom, 4000–8000 up the side, labelled in thousands under the bottom leg and left of the side leg | bar green < 5000, yellow 5000–6499, red ≥ 6500; track grey, red zone dark red above y 90 |
+| Scale notches | 1 px across the full bar thickness at every 1000 rpm (`TICK_EVERY`), so 6 interior notches: 1–3 on the bottom leg, 5–7 on the side | segments the bar, lining up with the labels. They go **inside** the bar because nothing fits outside it — the cells and the history box come down to y 186, 4 px above the bar | background colour, so they read as gaps in both bar and track |
 | RPM number | left block, centred on (67, 108) | the speed in 10 rpm steps, in font 7, the library's 7-segment face. 32 px per digit, so `8888` is 128 px and spans x 3–131, 3 px clear of the cells. **Clamped to `RPM_MAX`**: `blk[2]` × 40 can reach 10200, and a fifth digit would run off the edge and into a cell. The serial summary still logs the unclamped value | white, grey when there's no value |
 | RPM history | framed box x 6–128, y 138–186; plot area 118 × 42 px | a filled rpm trace, one sample per 250 ms, so about **30 s** of history scrolling leftwards. A dim line marks `RPM_RED` behind it. 236 bytes of RAM | each column takes its own sample's zone colour, so peaks go yellow then red |
 | RPM heading | dial + `RPM` centred as one group above the number | a tachometer dial: circle, needle, hub | follows the rev zone, like the bar |
@@ -521,18 +525,35 @@ nothing else, so once the board is cased the shift LED is hidden. It needs eithe
 a small hole in the lid above the LED or a light pipe; until then the LED only
 helps on the bench. Nothing in `tools/make_case.py` cuts that hole yet.
 
-**No stale pixels.** Both overlays sit on top of the bar, so they are drawn after
-it, and `gaugeSlice()` repaints the slice they vacate with the right colour — bar
-below the current reading, track above it. A colour-zone change repaints both
-legs and wipes the overlays, so `gaugeSet()` raises `gaugeFullRepaint` and they
-redraw unconditionally on that frame. This was checked by simulating 1200 frames
-of a full sweep, including a lost session, and comparing every pixel of both legs
-against a freshly built ideal on each frame.
+**Who paints the bar.** `barBottom()` and `barSide()` are the only two functions
+that paint a stretch of a leg, and each one stamps the scale notches back in over
+whatever it just filled. Everything else — the track, the bar itself, and the
+slice restored when an overlay moves — goes through them, so no painted stretch
+can come out without its notches. That is why the notches survive the bar growing
+and shrinking over them without being a separate overlay that would need its own
+redraw logic.
+
+**No stale pixels.** The peak tick and the shift light sit on top of the bar, so
+they are drawn after it, and `gaugeSlice()` repaints the slice they vacate with
+the right colour — bar below the current reading, track above it. A colour-zone
+change repaints both legs and wipes them, so `gaugeSet()` raises
+`gaugeFullRepaint` and they redraw unconditionally on that frame.
+
+This is checked by simulating 1200 frames of a full sweep, including a lost
+session, and comparing every pixel of both legs against a freshly built ideal on
+each frame. The check is run twice: once as written, which matches on every
+frame, and once with `gaugeFullRepaint` suppressed, which mismatches — 42 pixels
+wrong at the first zone crossing. Without that second run the first proves
+little, which is exactly how the missing `gaugeFullRepaint = true` survived an
+earlier version of this simulation: it modelled the intended design rather than
+the code, and the flag was declared and read but never set, so the peak tick
+could vanish for up to its hold time after each zone crossing.
 
 | Constant | Value | Controls |
 | --- | --- | --- |
 | `RPM_MAX`, `RPM_WARN`, `RPM_RED` | 8000, 5000, 6500 | bar end, start of yellow, start of red |
 | `RPM_MID` | `RPM_MAX / 2` | the rpm at the corner, where the bar turns upward |
+| `TICK_EVERY` | 1000 | spacing of the scale notches cut across the bar |
 | `G_W`, `G_BX0`/`G_BX1`/`G_BY`, `G_VX`/`G_VY0`/`G_VY1` | 14, 6/314/190, 300/190/30 | thickness and the two legs of the L |
 | `RPM_CX`, `RPM_CY` | 67, 108 | centre of the big rpm number |
 | `ICON_W`, `ICON_H` | 17, 13 | box every symbol is drawn in |
@@ -546,10 +567,64 @@ against a freshly built ideal on each frame.
 | `BL_FREQ`, `BL_BITS`, `BL_MIN`, `BL_MAX` | 5000, 8, 40, 255 | backlight PWM, and the floor it never dims past |
 | `LDR_DARK`, `LDR_BRIGHT`, `LDR_SMOOTH`, `LDR_STEP` | 3000, 300, 0.05, 4 | the sensor's two ends, how fast it follows, smallest duty change worth writing |
 | `RGB_R_PIN`/`RGB_G_PIN`/`RGB_B_PIN`, `LDR_PIN` | 4/16/17, 34 | onboard LED (active low) and light sensor |
+| `TOUCH_IRQ_PIN`, `TOUCH_HOLD_FRAMES`, `TOUCH_DEBOUNCE_MS` | 36, 3, 350 | PENIRQ, how long a press must hold, and the gap between accepted taps |
+| `ADC_SWEEP_N`, `DTC_MAX` | 0x0C, 8 | channels swept on page 2, and raw fault bytes kept |
+| `DIAG_X`/`DIAG_Y`, `DIAG_COLS`, `DIAG_CELL_W`/`DIAG_CELL_H` | 6/64, 4, 77/25 | the ADC grid on page 2 |
 | `DASH_FRAME_MS` | 40 | frame time of the display task (\~25 fps) |
 | `RPM_SMOOTHING` | 0.18 | how fast the gauge follows a new reading (0.30 first, looked too twitchy) |
 | `SPLASH_MS` | 5000 | how long the boot splash stays up (it delays the first handshake by that much) |
 | `DEMO_MODE` | 0 | 1 = simulated values, no K-line traffic |
+
+### Page 2: diagnostics
+
+Tap anywhere to reach it, and again to go back.
+
+| Element | Position | Shows |
+| --- | --- | --- |
+| Fault line | y 30–46, the headline of the page | `FAULTS none stored` in green for the measured `FC 00` reply, `FAULTS raw XX XX …` in **red** for anything else, `FAULTS --` in grey before the first read |
+| ADC grid | 4 × 3 cells of 77 × 25 px from (6, 64) | the raw low byte of every channel that answers, 00–0B. Channel numbers are white for the six identified ones and grey for the rest |
+| Session extremes | y 160–220 | max rpm, and the min-to-max range of coolant and battery seen this session |
+
+**Faults are shown raw, not decoded.** Request `07` answers with a type `FC`
+block, and a single `00` byte means nothing is stored — that is what this ECU
+returned on all 28 reads during the discovery runs. The byte layout of an actual
+fault has never been seen, so decoding it in the firmware would be invention.
+The serial log prints a `[DTC]` line whenever the bytes change.
+
+To see the red branch without a fault in the car,
+[`tools/m2104_sim.py`](../tools/m2104_sim.py) can fake one:
+
+```sh
+python3 tools/m2104_sim.py --port /dev/cu.usbserial-XXXX --fault "01 23 45"
+```
+
+That needs the bench wiring from P2b. The simulator's own reply to `07` was a
+guess (empty data) until the discovery runs measured it; it now answers `FC 00`.
+
+**The poller changes what it asks for on this page.** Instead of the 10-slot
+rotation it sweeps the 12 ADC channels plus one fault read, 13 exchanges in all,
+so the page refreshes in about 3.5 s. It deliberately stops at channel `0B`:
+`0C`–`0F` never reply, and asking for them would look like a lost session and
+trigger a reconnect. Rpm is not polled while this page is up, so the gauge is
+stale when you go back — it catches up within a frame or two.
+
+### Touch
+
+The XPT2046 is on **its own SPI bus** on this board (CS 33, MOSI 32, MISO 39,
+CLK 25), which TFT_eSPI's built-in touch cannot drive, and `User_Setup.h` has no
+`TOUCH_` settings at all.
+
+None of that matters here, because switching page needs only press detection and
+never a coordinate: **PENIRQ on GPIO 36 is low while the panel is pressed**, so
+one `digitalRead` does the job — no second SPI bus, no library, and nothing to
+calibrate. If a later page ever needs on-screen buttons, that is when the
+coordinate side has to be built and calibrated.
+
+GPIO 36 is input-only with no internal pull-up, so PENIRQ is held high only by
+the touch controller, with the display's SPI and the backlight PWM as noisy
+neighbours. A press therefore has to read low for `TOUCH_HOLD_FRAMES` frames in
+a row (120 ms) before it counts; a finger easily lasts that long and a spike does
+not. Measured with nobody touching the screen: 0 switches in 12 s.
 
 ### Screen setup for this CYD
 
@@ -598,9 +673,9 @@ Values are fed every 300 ms, about the real update rate, so it also shows how th
 | `case_clickfit.stl` | Coupon with just the Click holder. **Confirmed to fit on 5 Oct 2026** | 37 × 39 × 13.9 mm |
 | `case_fitcheck.stl` | Coupon with the CYD hole pattern, short posts | 122 × 56 × 7.8 mm |
 | `case_bottom.stl` | Shell: floor, walls, CYD posts, Click holder | 127.2 × 60.8 × 21.1 mm |
-| `case_lid.3mf` | Lid + badge as one object in three parts, for multi-colour printing | 127.2 × 60.8 × 8 mm |
+| `case_lid.3mf` | Lid + badge as one object in three parts, for multi-colour printing | 127.2 × 60.8 × 11 mm |
 | `case_lid.stl`, `case_lid_badge_*.stl` | The same three parts separately |  |
-| `case_lid_embossed.stl` | Lid with the badge raised 1.4 mm, for one colour | 127.2 × 60.8 × 9.4 mm |
+| `case_lid_embossed.stl` | Lid with the badge raised 1.4 mm, for one colour | 127.2 × 60.8 × 12.4 mm |
 
 ### What the measurements come from
 
@@ -626,7 +701,7 @@ The Click's own mounting holes aren't usable, and its headers sit only 1.27 mm f
 
 The quadrifoglio is **traced from an image** by `tools/trace_badge.py`: green pixels and the outline around them become the clover, the remaining grey becomes the triangle, filled solid. It writes `tools/badge_data.py`, which the case generator picks up automatically; without it the generator falls back to a clover drawn from curves, so the files still build.
 
-The badge is **inlaid, not raised**: lid, triangle and clover all end flush at the lid surface, with the colours filling the top 0.6 mm. The parts overlap on purpose, since slicers give an overlap to the part listed last, so the clover comes after the triangle.
+The badge is **inlaid, not raised**: lid, triangle and clover all end flush at the lid surface, with the colours filling the top **3.0 mm, 15 layers at 0.2 mm**. The lid's top plate was thickened from 2.0 to 5.0 mm for exactly this: a colour change only three layers deep came out washed out. The parts overlap on purpose, since slicers give an overlap to the part listed last, so the clover comes after the triangle. The screen window also moved 3 mm left (`CYD_SCREEN_OFF_X` = -3.0) and is 3 mm deeper, so the glass sits 7.0 mm below the lid surface.
 
 **Not in the repository:** `clover.png`, `logo.png` and the generated data files are trademarked artwork and are in `.gitignore`.
 

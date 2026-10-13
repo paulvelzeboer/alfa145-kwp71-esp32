@@ -78,6 +78,30 @@ TFT_eSPI tft = TFT_eSPI();
 #define RGB_G_PIN 16
 #define RGB_B_PIN 17
 #define LDR_PIN   34           // light sensor, ADC1 channel 6
+// Touchscreen: the XPT2046 is on its own SPI bus here (CS 33, MOSI 32, MISO 39,
+// CLK 25), which TFT_eSPI's built-in touch cannot drive. A tap only has to
+// switch page, so only press detection is needed, never coordinates - and
+// PENIRQ gives that from one pin, with no SPI traffic and nothing to calibrate.
+#define TOUCH_IRQ_PIN 36       // low while the panel is pressed
+#define TOUCH_DEBOUNCE_MS 350
+// GPIO 36 is input-only with no internal pull-up, so PENIRQ is held high only
+// by the touch controller, and the display's SPI plus the backlight PWM are
+// noisy neighbours. A real press lasts far longer than a spike, so the pin has
+// to read low for this many frames in a row before it counts.
+#define TOUCH_HOLD_FRAMES 3    // 3 x DASH_FRAME_MS = 120 ms
+
+// Two pages, switched by tapping anywhere. The diagnostics page sweeps the ADC
+// channels instead of the usual rotation, so it needs its own state.
+#define PAGE_DASH 0
+#define PAGE_DIAG 1
+#define ADC_SWEEP_N 0x0C       // channels 00-0B answer; 0C-0F never reply, and
+                               // asking for them would look like a lost session
+#define DIAG_COLS 4            // 12 channels as 4 x 3 cells
+#define DIAG_CELL_W 77
+#define DIAG_CELL_H 25
+#define DIAG_X 6
+#define DIAG_Y 64              // under the fault line, which is the headline
+#define DTC_MAX 8              // raw fault bytes kept
 
 // DEMO_MODE 1: no K-line traffic at all - the dashboard shows simulated
 // values (rpm sweeping into the red zone, battery, coolant warming up) so
@@ -211,6 +235,10 @@ unsigned long selfEchoErrors = 0; // bytes whose loopback was missing or wrong
 #define CELL_AIRQ 3
 #define RPM_MAX   8000
 #define RPM_MID   (RPM_MAX / 2) // rpm at the corner, where the bar turns
+#define TICK_EVERY 1000         // a 1 px notch across the bar at each of these,
+                                // lining up with the labels in thousands
+#define TICK_MINOR_LEN 5        // minor graduation beside the bar, at the 500 rpm
+                                // half-steps, in the gaps between the labels
 #define RPM_WARN  5000          // yellow from here
 #define RPM_RED   6500          // red from here
 
@@ -233,6 +261,16 @@ volatile float shBatt = -1;     // V, < 0 = no value
 volatile float shCool = -1000;  // C, <= -999 = no value
 volatile float shAirT = -1000;  // air temperature, C
 volatile float shAirQ = -1;     // air quantity, raw ECU value
+volatile int   shPage = PAGE_DASH;       // set by the touch handler, read by the
+                                         // poller to choose what to ask for
+volatile uint8_t adcRaw[ADC_SWEEP_N];    // last raw value per ADC channel
+volatile uint16_t adcSeen = 0;           // bit per channel that has answered
+volatile uint8_t adcDtc[DTC_MAX];        // raw data bytes of the type FC reply
+volatile uint8_t adcDtcLen = 0;          // 0 = request 07 not answered yet
+// Session extremes, updated by the poller as values decode on the dash page.
+volatile int   maxRpmSeen = 0;
+volatile float minBattSeen = 99, maxBattSeen = -1;
+volatile float minCoolSeen = 999, maxCoolSeen = -999;
 SemaphoreHandle_t dashMutex = NULL;
 String   shStatus = "STARTING";
 uint16_t shStatusCol = TFT_YELLOW;
@@ -309,35 +347,64 @@ int rpmSideLen(int rpm) {
 // SMALLER y - worth remembering when reading the track code below.
 int sideY(int rpm) { return G_VY0 - rpmSideLen(rpm); }
 
+// Scale notches, in the background colour, so they segment the bar. Whatever
+// paints a stretch of bar or track cuts them back in, so they survive the bar
+// growing and shrinking over them. They go inside the bar because there is no
+// room outside it: the cells and the history box come down to y 186, 4 px above.
+void ticksBottom(int x0, int x1) {
+  for (int r = TICK_EVERY; r < RPM_MID; r += TICK_EVERY) {
+    int x = G_BX0 + rpmBottomLen(r);
+    if (x >= x0 && x < x1) tft.drawFastVLine(x, G_BY, G_W, COL_BG);
+  }
+}
+
+void ticksSide(int yTop, int yBot) {
+  for (int r = RPM_MID + TICK_EVERY; r < RPM_MAX; r += TICK_EVERY) {
+    int y = sideY(r);
+    if (y >= yTop && y < yBot) tft.drawFastHLine(G_VX, y, G_W, COL_BG);
+  }
+}
+
+// The only two places that paint a stretch of a leg. Everything else goes
+// through these, so no painted stretch can come out without its notches.
+void barBottom(int x0, int x1, uint16_t col) {
+  if (x1 <= x0) return;
+  tft.fillRect(x0, G_BY, x1 - x0, G_W, col);
+  ticksBottom(x0, x1);
+}
+
+void barSide(int yTop, int yBot, uint16_t col) {
+  if (yBot <= yTop) return;
+  tft.fillRect(G_VX, yTop, G_W, yBot - yTop, col);
+  ticksSide(yTop, yBot);
+}
+
 // The empty track: grey, turning dark red past RPM_RED, as the ring did.
 void trackBottom(int x0, int x1) {
-  if (x1 > x0) tft.fillRect(x0, G_BY, x1 - x0, G_W, COL_FRAME);
+  barBottom(x0, x1, COL_FRAME);
 }
 
 void trackSide(int yTop, int yBot) {
   int yRed = sideY(RPM_RED);
-  if (yTop < yRed) {                          // above the red line
-    int b = min(yBot, yRed);
-    if (b > yTop) tft.fillRect(G_VX, yTop, G_W, b - yTop, COL_REDZONE);
-  }
-  if (yBot > yRed) {
-    int t = max(yTop, yRed);
-    if (yBot > t) tft.fillRect(G_VX, t, G_W, yBot - t, COL_FRAME);
-  }
+  if (yTop < yRed) barSide(yTop, min(yBot, yRed), COL_REDZONE);
+  if (yBot > yRed) barSide(max(yTop, yRed), yBot, COL_FRAME);
 }
 
 void gaugeSet(int rpm) {
   int nb = rpmBottomLen(rpm), ns = rpmSideLen(rpm);
   uint16_t col = rpmColor(rpm);
   if (col != gaugeColor) {                    // zone changed: repaint both legs
-    if (nb) tft.fillRect(G_BX0, G_BY, nb, G_W, col);
+    barBottom(G_BX0, G_BX0 + nb, col);
     trackBottom(G_BX0 + nb, G_BX1);
-    if (ns) tft.fillRect(G_VX, G_VY0 - ns, G_W, ns, col);
+    barSide(G_VY0 - ns, G_VY0, col);
     trackSide(G_VY1, G_VY0 - ns);
+    // Both legs were just repainted, so the peak tick and the shift light that
+    // sat on top of them are gone and must redraw whatever they last decided.
+    gaugeFullRepaint = true;
   } else {                                    // only the changed stretch
-    if (nb > gaugeBottom) tft.fillRect(G_BX0 + gaugeBottom, G_BY, nb - gaugeBottom, G_W, col);
+    if (nb > gaugeBottom) barBottom(G_BX0 + gaugeBottom, G_BX0 + nb, col);
     else if (nb < gaugeBottom) trackBottom(G_BX0 + nb, G_BX0 + gaugeBottom);
-    if (ns > gaugeSide) tft.fillRect(G_VX, G_VY0 - ns, G_W, ns - gaugeSide, col);
+    if (ns > gaugeSide) barSide(G_VY0 - ns, G_VY0 - gaugeSide, col);
     else if (ns < gaugeSide) trackSide(G_VY0 - gaugeSide, G_VY0 - ns);
   }
   gaugeBottom = nb;
@@ -394,15 +461,12 @@ void gaugeSlice(bool side, int pos, int len) {
   if (!side) {
     int x0 = G_BX0 + pos, x1 = min(x0 + len, G_BX1);
     int edge = G_BX0 + gaugeBottom;                  // bar ends here
-    if (x0 < edge) tft.fillRect(x0, G_BY, min(x1, edge) - x0, G_W, gaugeColor);
+    if (x0 < edge) barBottom(x0, min(x1, edge), gaugeColor);
     if (x1 > edge) trackBottom(max(x0, edge), x1);
   } else {
     int yb = G_VY0 - pos, yt = max(yb - len, G_VY1);
     int edge = G_VY0 - gaugeSide;                    // bar ends here (smaller y)
-    if (yb > edge) {
-      int t = max(yt, edge);
-      if (yb > t) tft.fillRect(G_VX, t, G_W, yb - t, gaugeColor);
-    }
+    if (yb > edge) barSide(max(yt, edge), yb, gaugeColor);
     if (yt < edge) trackSide(yt, min(yb, edge));
   }
 }
@@ -590,8 +654,8 @@ void drawRpmNumber(const String &txt, uint16_t col) {
 }
 
 // Static parts; called once from setup() before the display task starts.
-void dashFrame() {
-  tft.fillScreen(COL_BG);
+// Badge and car name: the same strip on both pages, so it has one owner.
+void drawTopBar() {
   tft.fillRect(0, 0, 320, 24, COL_BAR);
 #ifdef HAVE_LOGO
   tft.setSwapBytes(true);
@@ -601,6 +665,11 @@ void dashFrame() {
 #else
   drawText("ALFA 145 QV", 6, 12, ML_DATUM, 2, TFT_WHITE, COL_BAR, 0);
 #endif
+}
+
+void dashFrame() {
+  tft.fillScreen(COL_BG);
+  drawTopBar();
 
   // L gauge: empty track, then the scale in thousands. The bottom leg is
   // labelled under the bar, the side leg to its left, so the labels never sit
@@ -621,6 +690,18 @@ void dashFrame() {
     drawText(String(k), G_VX - 4, sideY(k * 1000), MR_DATUM, 1,
              k * 1000 >= RPM_RED ? TFT_RED : COL_LABEL, COL_BG, 0);
   }
+  // Minor graduations at the 500 rpm half-steps, in the gaps between those
+  // labels: a short mark beside the bar rather than another notch in it, so the
+  // scale gets finer without breaking the bar up further. They sit outside the
+  // bar, so nothing ever paints over them and they are drawn once, here.
+  for (int r = TICK_EVERY / 2; r < RPM_MID; r += TICK_EVERY) {
+    tft.drawFastVLine(G_BX0 + rpmBottomLen(r), G_BY + G_W + 1, TICK_MINOR_LEN,
+                      r >= RPM_RED ? TFT_RED : COL_LABEL);
+  }
+  for (int r = RPM_MID + TICK_EVERY / 2; r < RPM_MAX; r += TICK_EVERY) {
+    tft.drawFastHLine(G_VX - TICK_MINOR_LEN - 1, sideY(r), TICK_MINOR_LEN,
+                      r >= RPM_RED ? TFT_RED : COL_LABEL);
+  }
   // Dial and "RPM" are centred together as one group, so the pair sits over
   // the number rather than the text alone.
   int gw = ICON_W + 4 + tft.textWidth("RPM", 2);
@@ -631,8 +712,8 @@ void dashFrame() {
   // The rpm history takes the space the "x1000" hint used to fill; both legs
   // of the bar already carry labels in thousands, so the hint was redundant.
   tft.drawRoundRect(SPARK_X, SPARK_Y, SPARK_W, SPARK_H, 5, COL_FRAME);
-  for (int i = 0; i < SPARK_PW; i++) sparkBuf[i] = -1;
-  sparkDraw();
+  sparkDraw();                 // the buffer itself is filled in setup(), so the
+                               // history survives switching pages and back
 
   // 2 x 2 value grid: title (left), unit (right), value in the middle.
   // Units live in the labels so the value line can stay as wide as possible.
@@ -657,6 +738,101 @@ void dashFrame() {
   }
 
   dashReady = true;
+}
+
+// ---- Diagnostics page: every ADC channel the ECU answers, raw, plus what the
+// session has seen. Raw on purpose: this is the page for working out what an
+// unknown channel does, and a scaled number would hide that.
+int diagX(int i) { return DIAG_X + (i % DIAG_COLS) * DIAG_CELL_W; }
+int diagY(int i) { return DIAG_Y + (i / DIAG_COLS) * DIAG_CELL_H; }
+
+void diagFrame() {
+  tft.fillScreen(COL_BG);
+  drawTopBar();
+  drawText("ADC CHANNELS (raw)", DIAG_X, 56, ML_DATUM, 1, COL_LABEL, COL_BG, 0);
+  for (int i = 0; i < ADC_SWEEP_N; i++) {
+    char lbl[4];
+    snprintf(lbl, sizeof(lbl), "%02X", i);
+    drawText(lbl, diagX(i), diagY(i) + 12, ML_DATUM, 2,
+             i == ADC_COOLANT || i == ADC_AIRTEMP || i == ADC_AIRQTY || i == 0x00 ||
+             i == 0x01 || i == 0x07 ? TFT_WHITE : COL_LABEL, COL_BG, 0);
+  }
+  drawText("SESSION", DIAG_X, 150, ML_DATUM, 1, COL_LABEL, COL_BG, 0);
+  drawText("tap anywhere to go back", 314, 232, MR_DATUM, 1, COL_LABEL, COL_BG, 0);
+}
+
+// What is currently on the page, so only changed numbers are redrawn - the
+// same discipline as the dash page, and it matters more here: 15 padded strings
+// repainted every frame would both flicker and swamp the SPI bus.
+uint8_t  diagShown[ADC_SWEEP_N];
+uint16_t diagShownSeen = 0;
+uint8_t  diagShownDtc[DTC_MAX];
+int      diagShownDtcLen = -1;
+int      diagShownRpm = -1;
+float    diagShownCoolMin = 1e9, diagShownCoolMax = 1e9;
+float    diagShownBattMin = 1e9, diagShownBattMax = 1e9;
+
+void diagUpdate(bool force) {
+  // Fault line, at the top because on a diagnostics page it is the headline.
+  // The ECU answers request 07 with a type FC block; a single 00 byte means no
+  // stored faults, which is all this ECU has ever returned (28 reads out of
+  // 28). Anything else is shown RAW on purpose - the byte layout of a real
+  // fault has never been seen, so decoding it here would be a guess.
+  bool dtcChanged = force || adcDtcLen != diagShownDtcLen;
+  for (int i = 0; i < adcDtcLen && i < DTC_MAX; i++)
+    if (adcDtc[i] != diagShownDtc[i]) dtcChanged = true;
+  if (dtcChanged) {
+    String txt;
+    uint16_t col;
+    if (adcDtcLen == 0) {
+      txt = "FAULTS  --";
+      col = COL_LABEL;
+    } else if (adcDtcLen == 1 && adcDtc[0] == 0x00) {
+      txt = "FAULTS  none stored";
+      col = TFT_GREEN;
+    } else {
+      txt = "FAULTS  raw";
+      for (int i = 0; i < adcDtcLen && i < DTC_MAX; i++) {
+        char b[4];
+        snprintf(b, sizeof(b), " %02X", adcDtc[i]);
+        txt += b;
+      }
+      col = TFT_RED;
+    }
+    drawText(txt, DIAG_X, 38, ML_DATUM, 2, col, COL_BG, 300);
+    diagShownDtcLen = adcDtcLen;
+    for (int i = 0; i < adcDtcLen && i < DTC_MAX; i++) diagShownDtc[i] = adcDtc[i];
+  }
+
+  for (int i = 0; i < ADC_SWEEP_N; i++) {
+    bool seen = (adcSeen >> i) & 1, was = (diagShownSeen >> i) & 1;
+    if (!force && seen == was && (!seen || adcRaw[i] == diagShown[i])) continue;
+    drawText(seen ? String(adcRaw[i]) : String("--"),
+             diagX(i) + 26, diagY(i) + 12, ML_DATUM, 2, TFT_WHITE, COL_BG, 30);
+    diagShown[i] = adcRaw[i];
+    diagShownSeen = (diagShownSeen & ~(1 << i)) | (seen << i);
+  }
+  if (force || maxRpmSeen != diagShownRpm) {
+    drawText("RPM max " + (maxRpmSeen > 0 ? String(maxRpmSeen) : String("--")),
+             DIAG_X, 168, ML_DATUM, 2, TFT_WHITE, COL_BG, 300);
+    diagShownRpm = maxRpmSeen;
+  }
+  if (force || minCoolSeen != diagShownCoolMin || maxCoolSeen != diagShownCoolMax) {
+    drawText("Coolant " + (maxCoolSeen > -999
+               ? String(minCoolSeen, 1) + " to " + String(maxCoolSeen, 1) + " C"
+               : String("--")),
+             DIAG_X, 190, ML_DATUM, 2, TFT_WHITE, COL_BG, 300);
+    diagShownCoolMin = minCoolSeen;
+    diagShownCoolMax = maxCoolSeen;
+  }
+  if (force || minBattSeen != diagShownBattMin || maxBattSeen != diagShownBattMax) {
+    drawText("Battery " + (maxBattSeen > -1
+               ? String(minBattSeen, 2) + " to " + String(maxBattSeen, 2) + " V"
+               : String("--")),
+             DIAG_X, 212, ML_DATUM, 2, TFT_WHITE, COL_BG, 300);
+    diagShownBattMin = minBattSeen;
+    diagShownBattMax = maxBattSeen;
+  }
 }
 
 // ---- Called from the K-line code: only store, never draw.
@@ -710,6 +886,10 @@ void dashTask(void *param) {
   unsigned long sparkAt = 0;
   float ldrAvg = analogRead(LDR_PIN);
   int blDuty = BL_MAX;
+  int drawnPage = PAGE_DASH;
+  bool touchWas = false;
+  int  touchLow = 0;            // consecutive frames PENIRQ has read low
+  unsigned long touchAt = 0;
 
   // Self-test sweep, the way a cluster wakes up: run the bar to the top and
   // back once. It also proves both legs and the red zone draw before any data
@@ -724,6 +904,33 @@ void dashTask(void *param) {
   }
 
   for (;;) {
+    // A tap anywhere switches page. Press detection only, so there is nothing
+    // to calibrate: PENIRQ is low while the panel is touched.
+    touchLow = digitalRead(TOUCH_IRQ_PIN) == LOW ? touchLow + 1 : 0;
+    bool touched = touchLow >= TOUCH_HOLD_FRAMES;
+    if (touched && !touchWas && millis() - touchAt > TOUCH_DEBOUNCE_MS) {
+      touchAt = millis();
+      shPage = shPage == PAGE_DASH ? PAGE_DIAG : PAGE_DASH;
+      Serial.println("[TOUCH] page " + String(shPage == PAGE_DASH ? "dash" : "diag") +
+                     " (held " + String(touchLow) + " frames)");
+    }
+    touchWas = touched;
+
+    if (shPage != drawnPage) {                   // rebuild the whole screen
+      drawnPage = shPage;
+      if (drawnPage == PAGE_DASH) dashFrame();
+      else { diagFrame(); diagUpdate(true); }
+      // Everything cached as "already drawn" is gone with the old screen.
+      drawnRpm = -2; drawnBatt = -2; drawnCool = -2; drawnAirT = -2; drawnAirQ = -2;
+      drawnTacho = COL_LABEL;
+      shiftTextOn = false;
+      dotX = 0;
+      xSemaphoreTake(dashMutex, portMAX_DELAY);
+      shStatusDirty = true;
+      shBottomDirty = true;
+      xSemaphoreGive(dashMutex);
+    }
+
     // status bar and bottom line (copied under the mutex, drawn outside it)
     String st, bt;
     uint16_t sc = 0, bc = 0;
@@ -752,6 +959,12 @@ void dashTask(void *param) {
       tft.fillCircle(dotX, 12, 5, blend565(COL_BAR, dotCol, f));
     }
     if (bd) drawText(bt, 6, 227, ML_DATUM, 2, bc, COL_BG, 308);
+
+    if (drawnPage == PAGE_DIAG) {               // nothing below this is on page 2
+      diagUpdate(false);
+      vTaskDelay(pdMS_TO_TICKS(DASH_FRAME_MS));
+      continue;
+    }
 
     // rpm: ease towards the target, redraw only when the shown value changes
     int target = shRpm;
@@ -1365,6 +1578,38 @@ bool pollAndDisplayParams() {
 
   uint8_t blk[MAX_BLOCK_LEN];
   int len;
+
+  // On the diagnostics page the rotation is replaced by a sweep of every
+  // channel that answers, so the whole page refreshes in about 12 exchanges.
+  if (shPage == PAGE_DIAG) {
+    int step = pollN++ % (ADC_SWEEP_N + 1);
+    if (step == ADC_SWEEP_N) {                 // one step asks for faults
+      uint8_t dtcReq[] = {0x07};
+      if (!requestParam(dtcReq, sizeof(dtcReq), "DTC", blk, &len)) return false;
+      if (len >= 4 && blk[1] == 0xFC) {
+        int n = min(len - 3, DTC_MAX);          // [ctr, FC, data..., 03]
+        bool changed = n != adcDtcLen;
+        for (int i = 0; i < n; i++) {
+          if (adcDtc[i] != blk[2 + i]) changed = true;
+          adcDtc[i] = blk[2 + i];
+        }
+        adcDtcLen = n;
+        if (changed)
+          dbg("  [DTC] type FC data " + hexs(blk + 2, n) +
+              (n == 1 && blk[2] == 0x00 ? "  (no stored faults)"
+                                        : "  !! something is stored - raw, undecoded"));
+      }
+      return true;
+    }
+    uint8_t req[] = {0x08, (uint8_t)step};
+    if (!requestParam(req, sizeof(req), "ADC", blk, &len)) return false;
+    if (len >= 5 && blk[1] == 0xFB) {
+      adcRaw[step] = blk[3];
+      adcSeen |= (1 << step);
+    }
+    return true;
+  }
+
   int slot = pollN++ % 10;
 
   if (slot == 1) {
@@ -1372,6 +1617,8 @@ bool pollAndDisplayParams() {
     // Reply layout: [counter, type, data..., 03] - first data byte is blk[2].
     if (len >= 4 && blk[1] == 0xFE) {
       lastBatt = blk[2] * BATT_SCALE + BATT_OFFSET;
+      if (lastBatt < minBattSeen) minBattSeen = lastBatt;
+      if (lastBatt > maxBattSeen) maxBattSeen = lastBatt;
       dbg("  [BATT] raw 0x" + String(blk[2], HEX) + " (" + String(blk[2]) + ") -> " +
           String(lastBatt, 2) + " V" +
           (lastBatt < BATT_MIN_PLAUSIBLE || lastBatt > BATT_MAX_PLAUSIBLE
@@ -1380,7 +1627,11 @@ bool pollAndDisplayParams() {
   } else if (slot == 3) {
     if (!requestParam(coolReq, sizeof(coolReq), "COOLANT", blk, &len)) return false;
     // ADC read -> type 0xFB + 2 bytes (hi, lo); the formula uses the low byte.
-    if (len >= 5 && blk[1] == 0xFB) lastCool = ntcTemp(blk[3]);
+    if (len >= 5 && blk[1] == 0xFB) {
+      lastCool = ntcTemp(blk[3]);
+      if (lastCool < minCoolSeen) minCoolSeen = lastCool;
+      if (lastCool > maxCoolSeen) maxCoolSeen = lastCool;
+    }
   } else if (slot == 5) {
     if (!requestParam(airTReq, sizeof(airTReq), "AIRTEMP", blk, &len)) return false;
     // Same NTC curve as coolant, and the cold run confirms it: raw 197 with a
@@ -1400,10 +1651,12 @@ bool pollAndDisplayParams() {
     //   blk[2] = rpm / 40, which carries on past that
     // Idle read 20 / 82 (800 / 820 rpm) and a held 3000 rpm averaged 74.6 on
     // blk[2] (2984 rpm). Both read 00 00 with the engine off.
-    if (len >= 5 && blk[1] == 0xFE)
+    if (len >= 5 && blk[1] == 0xFE) {
       lastRpm = blk[3] < 0xFF ? blk[3] * 10 : blk[2] * 40;
+      if (lastRpm > maxRpmSeen) maxRpmSeen = lastRpm;
+    }
   }
-  dashValues(lastBatt, lastRpm, lastCool, lastAirT, lastAirQ);
+  dashValues(lastBatt, lastRpm, lastCool, lastAirT, lastAirQ);   // store only
 
   if (slot == 9) {                   // one summary line per 10 exchanges
     String line = "Batt: " + (lastBatt > -1 ? String(lastBatt, 2) + "V" : String("--"));
@@ -1436,6 +1689,8 @@ void setup() {
                  "  (" + String(LDR_DARK) + " = dark -> dim, " +
                  String(LDR_BRIGHT) + " = bright -> full)");
   // RGB LED: all three off (active low) until the shift light wants red.
+  pinMode(TOUCH_IRQ_PIN, INPUT);        // PENIRQ, idle high
+  for (int i = 0; i < SPARK_PW; i++) sparkBuf[i] = -1;
   pinMode(RGB_R_PIN, OUTPUT); digitalWrite(RGB_R_PIN, HIGH);
   pinMode(RGB_G_PIN, OUTPUT); digitalWrite(RGB_G_PIN, HIGH);
   pinMode(RGB_B_PIN, OUTPUT); digitalWrite(RGB_B_PIN, HIGH);

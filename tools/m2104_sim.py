@@ -91,7 +91,9 @@ DEFAULT_PROFILE = {
                "memory": {"0036": "5E", "003B": "00 00"}},          # 12.4 V, 0 rpm (real)
         "08": {"kind": "adc", "type": "FB",                         # ch 03 coolant ~18 C
                "channels": {"01": "00 5E", "02": "00 B0", "03": "00 BB"}},  # (01/02 guessed)
-        "07": {"kind": "fixed", "type": "FC", "data": ""},          # no DTCs (guessed)
+        # Measured on the real ECU: request 07 answers type FC with a single
+        # 00 byte, 28 reads out of 28. The empty reply here before was a guess.
+        "07": {"kind": "fixed", "type": "FC", "data": "00"},        # no stored faults
     },
     "nak": {"type": "0A", "data": "06"},         # data byte as seen for a RAM read NAK
 }
@@ -361,6 +363,11 @@ def main():
     ap.add_argument("--session-timeout", type=float, default=2.0,
                     help="seconds without a tester block before the session is dropped")
     ap.add_argument("--once", action="store_true", help="run one session, then exit")
+    ap.add_argument("--fault", metavar="HEX",
+                    help="answer request 07 with these bytes instead of 00, e.g. "
+                         "--fault '01 23 45'. The real ECU has only ever returned "
+                         "00 (no faults), so this is the only way to exercise a "
+                         "reader's fault path until a car actually has one.")
     args = ap.parse_args()
 
     if args.dump_profile:
@@ -372,6 +379,16 @@ def main():
     profile = load_profile(args.profile)
     if args.w1_ms is not None:
         profile["w1_ms"] = args.w1_ms
+    if args.fault:
+        try:
+            bytes_ = [int(b, 16) for b in args.fault.replace(",", " ").split()]
+        except ValueError:
+            ap.error("--fault wants hex bytes, e.g. --fault '01 23 45'")
+        if not bytes_ or any(b < 0 or b > 0xFF for b in bytes_):
+            ap.error("--fault wants one or more bytes in the range 00-FF")
+        data = " ".join("%02X" % b for b in bytes_)
+        profile["responses"]["07"]["data"] = data
+        log("request 07 will answer type FC with: %s" % data)
 
     try:
         line = KLine(args.port, args.baud)

@@ -44,7 +44,9 @@ CYD_W, CYD_D, CYD_T = 86.0, 50.0, 1.6      # board outline and PCB thickness
 CYD_HOLE_DIA = 3.0                          # mounting hole diameter (not dimensioned: verify)
 CYD_HOLE_INSET_X, CYD_HOLE_INSET_Y = 4.0, 4.0   # hole centre from board edge -> 78 x 42 pattern
 CYD_SCREEN_W, CYD_SCREEN_D = 57.6, 43.2    # active display area (2.8", 320x240)
-CYD_SCREEN_OFF_X, CYD_SCREEN_OFF_Y = 0.0, 0.0   # screen centre vs board centre
+CYD_SCREEN_OFF_X, CYD_SCREEN_OFF_Y = -3.0, 0.0  # screen centre vs board centre:
+                                            # 3 mm left, the first print sat too
+                                            # far right
 CYD_STACK_H = 4.0                           # glass/bezel height above the PCB
 
 # ISO 9141 Click, from iso_9141_click_v101.dxf (outline layer and pad positions):
@@ -85,7 +87,11 @@ SPIGOT_H = 1.8                              # alignment pin on top of each post,
 SPIGOT_CLEAR = 0.3                          # board hole (hole diameter minus this)
 BOARD_GAP = 4.0                             # between CYD and Click
 CLICK_RIGHT_GAP = 6.0                       # right of the Click: room for rail + lid lip
-LID_T = 2.0                                 # lid top plate thickness
+LID_T = 5.0                                 # lid top plate thickness. 3 mm thicker
+                                            # than the first print, to give the badge
+                                            # inlay room for more coloured layers.
+                                            # It also deepens the screen window by
+                                            # the same 3 mm - see hardware/README.
 RECESS_MARGIN = 2.5                         # sunken screen panel vs the active area
 RECESS_WALL = 1.6                           # wall between the lid top and the sunken panel
 LID_LIP_H = 6.0                             # lip that drops into the shell
@@ -101,7 +107,12 @@ BADGE_INLAY = True                          # True  = badge sunk INTO the lid's 
                                             #         layers, so the surface stays flat
                                             #         (colour change, needs an AMS)
                                             # False = badge raised above the lid
-BADGE_INLAY_DEPTH = 0.6                     # how deep the colours reach (3 layers at 0.2)
+BADGE_INLAY_DEPTH = 3.0                     # how deep the colours reach: 15 layers at
+                                            # 0.2 mm, against 3 before, so the badge
+                                            # colours come out saturated instead of
+                                            # washed out over the grey. Leaves 2.0 mm
+                                            # of lid behind it, as much as the whole
+                                            # lid used to be.
 CLOVER_H = 1.4                              # clover height above the lid surface
 CLOVER_TRIANGLE = True                      # solid triangle behind it, like the badge
 CLOVER_TRI_H = 0.6                          # triangle height above the lid surface
