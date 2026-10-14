@@ -4,6 +4,10 @@ Reads a **Bosch Motronic M2.10.4** (Alfa Romeo 145 QV, part 0261204478) over the
 
 **Status (12 Oct 2026):** the full handshake and live values work on the real ECU, including the ID blocks (HW 0261204478, SW 1037357941, PN 46525168). A discovery run over all the ECU's ADC channels, in five engine states, identified throttle, battery, coolant, air quantity, intake air temperature and lambda, and gave the rpm and battery scales; all five dashboard values are now read from the car. Tested on the car the same day: the handshake, the smoother dashboard, and the rpm and battery readings all behave, and air temp and air quantity return data that still has to be checked against something known.
 
+<img src="docs/images/end.jpg" alt="The finished reader mounted in the car, connected to the ECU and showing live values" width="420">
+
+*Finished and working in the car: a live session at a cold fast idle — 1280 rpm, 14.53 V with the alternator charging, coolant and intake air both still at 20 °C, air quantity 57, and the ECU's own part numbers along the bottom. The quadrifoglio on the lid is the multi-colour inlay printed in white and green.*
+
 The full bring-up story, wiring, protocol findings and troubleshooting are in **[docs/kwp71-m2104-bringup.md](docs/kwp71-m2104-bringup.md)**.
 
 ## Repository layout

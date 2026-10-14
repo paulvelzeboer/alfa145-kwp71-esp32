@@ -2,6 +2,24 @@
 
 Sep 21, 2026 · @Paul
 
+## The finished reader
+
+![The reader mounted in the car, connected and showing live values](images/end.jpg)
+
+Installed and running on the car. The screen is a real session, not demo mode:
+**CONNECTED**, 1280 rpm on a cold fast idle, **14.53 V** with the engine running
+and the alternator charging, coolant and intake air both still at 20 °C so the
+coolant reads blue, air quantity 57, and the ECU's own identification along the
+bottom — `HW 0261204478  SW 1037357941`, exactly the numbers the handshake
+returns. The L bar runs along the bottom with its scale beneath it, and the
+quadrifoglio on the lid is the inlaid badge printed in white and green.
+
+That 14.53 V is worth noting: it is the first real-world sanity check of the
+battery scale, which was fitted from two raw counts and had never been seen
+against a running alternator. A charging system should sit near 14.4 V, and it
+does. It is still not a multimeter reading, so the open item stands, but the
+figure is where it ought to be rather than somewhere alarming.
+
 ## Goal and starting point
 
 The fastest route to a working ESP32 link is to copy the handshake that already works. First record the KKL cable's session on the K-line with the logic analyzer. Then make the ESP32's K-line trace match it, phase by phase.
