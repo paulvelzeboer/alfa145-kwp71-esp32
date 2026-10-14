@@ -568,7 +568,7 @@ could vanish for up to its hold time after each zone crossing.
 | `LDR_DARK`, `LDR_BRIGHT`, `LDR_SMOOTH`, `LDR_STEP` | 3000, 300, 0.05, 4 | the sensor's two ends, how fast it follows, smallest duty change worth writing |
 | `RGB_R_PIN`/`RGB_G_PIN`/`RGB_B_PIN`, `LDR_PIN` | 4/16/17, 34 | onboard LED (active low) and light sensor |
 | `TOUCH_IRQ_PIN`, `TOUCH_HOLD_FRAMES`, `TOUCH_DEBOUNCE_MS` | 36, 3, 350 | PENIRQ, how long a press must hold, and the gap between accepted taps |
-| `ADC_SWEEP_N`, `DTC_MAX` | 0x0C, 8 | channels swept on page 2, and raw fault bytes kept |
+| `ADC_SWEEP_N`, `DTC_MAX`, `DTC_EVERY_CYCLES` | 0x0C, 8, 10 | channels swept on page 2, raw fault bytes kept, and how often the dashboard asks for faults |
 | `DIAG_X`/`DIAG_Y`, `DIAG_COLS`, `DIAG_CELL_W`/`DIAG_CELL_H` | 6/64, 4, 77/25 | the ADC grid on page 2 |
 | `DASH_FRAME_MS` | 40 | frame time of the display task (\~25 fps) |
 | `RPM_SMOOTHING` | 0.18 | how fast the gauge follows a new reading (0.30 first, looked too twitchy) |
@@ -607,6 +607,58 @@ so the page refreshes in about 3.5 s. It deliberately stops at channel `0B`:
 `0C`–`0F` never reply, and asking for them would look like a lost session and
 trigger a reconnect. Rpm is not polled while this page is up, so the gauge is
 stale when you go back — it catches up within a frame or two.
+
+### Logging to the SD card
+
+Every drive is written to the CYD's own micro-SD slot as a CSV, so values can be
+looked at afterwards and intermittent faults chased.
+
+| | |
+| --- | --- |
+| File | the next free `/logNNNN.csv`, chosen at boot, so a drive never overwrites an earlier one |
+| Columns | `time_s,link,rpm,batt_v,coolant_c,airtemp_c,airqty_raw,dtc` |
+| Rate | one row per second |
+| Empty fields | a value that has not arrived yet is written as nothing, not as a sentinel, so the CSV loads cleanly |
+
+**Faults are logged on every row**, as the raw bytes with no spaces (`00` for
+nothing stored, `012345` for a reply of `01 23 45`), so the fault state always
+sits beside the conditions at that instant rather than in a separate file that
+has to be lined up afterwards. The field is empty until the first read.
+
+For that to mean anything while driving, **the dashboard polls request `07` too**
+— not just the diagnostics page, which would otherwise be the only thing that
+ever asked. Faults change rarely, so it goes out once every `DTC_EVERY_CYCLES`
+(10) rotations of the 10-slot poll, roughly every 30 s, costing one rpm reading
+each time. Both pages go through the same `pollDtc()`, so they store and log it
+identically.
+
+**Pins and bus.** CS 5, SCK 18, MISO 19, MOSI 23 — its own pins, and its own SPI
+peripheral, separate from the one driving the display. Both were confirmed
+working in the same sketch before this was built on.
+
+**It runs in its own task on core 0, and that is not optional.** A row normally
+takes 6–7 ms to write and flush, but a measured spike of **186 ms** turned up on
+the third row, where the card updated its allocation table. In the K-line loop
+that would have overrun the echo timing by an order of magnitude and dropped the
+session. On core 0 it cannot touch the protocol; the worst it can do is make the
+display stutter for a frame.
+
+**Every row is flushed.** In a car the power can disappear without warning, so
+one lost second beats losing the whole file to an unwritten buffer.
+
+**Logging starts at the first session and then keeps going through dropouts**,
+with the `link` column reading `up` or `down`. A gap is exactly what you want
+recorded when something is cutting out intermittently. If a write fails — card
+pulled, or full — logging stops and says so on the serial log rather than
+retrying into a void.
+
+The diagnostics page shows the file name and the row count, in green while
+logging and grey when there is no card.
+
+**The card is never formatted or cleared.** Logging only ever adds one file. The
+card in this unit already held an unrelated device's configuration, and wiping
+it was neither needed — it mounted first try as FAT — nor safe. To wipe one
+deliberately, take it out and do it on a computer.
 
 ### Touch
 
@@ -701,10 +753,10 @@ Values are fed every 300 ms, about the real update rate, so it also shows how th
 | --- | --- | --- |
 | `case_clickfit.stl` | Coupon with just the Click holder. **Confirmed to fit on 5 Oct 2026** | 37 × 39 × 13.9 mm |
 | `case_fitcheck.stl` | Coupon with the CYD hole pattern, short posts | 122 × 56 × 7.8 mm |
-| `case_bottom.stl` | Shell: floor, walls, CYD posts, Click holder | 127.2 × 60.8 × 21.1 mm |
-| `case_lid.3mf` | Lid + badge as one object in three parts, for multi-colour printing | 127.2 × 60.8 × 11 mm |
+| `case_bottom.stl` | Shell: floor, walls, CYD posts, Click holder, four screw ears | 143.2 × 60.8 × 24.1 mm |
+| `case_lid.3mf` | Lid + badge as one object in three parts, for multi-colour printing | 143.2 × 60.8 × 11 mm |
 | `case_lid.stl`, `case_lid_badge_*.stl` | The same three parts separately |  |
-| `case_lid_embossed.stl` | Lid with the badge raised 1.4 mm, for one colour | 127.2 × 60.8 × 12.4 mm |
+| `case_lid_embossed.stl` | Lid with the badge raised 1.4 mm, for one colour | 143.2 × 60.8 × 12.4 mm |
 
 ### What the measurements come from
 

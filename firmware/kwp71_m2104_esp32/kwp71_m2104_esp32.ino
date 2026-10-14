@@ -52,6 +52,8 @@
  */
 
 #include <TFT_eSPI.h>
+#include <SPI.h>
+#include <SD.h>
 // Badge bitmaps: optional. Generate logo_data.h from your own image with
 //   python3 tools/make_logo_header.py logo.png
 // It is not in the repository (car maker logos are trademarks). Without it
@@ -82,6 +84,15 @@ TFT_eSPI tft = TFT_eSPI();
 // CLK 25), which TFT_eSPI's built-in touch cannot drive. A tap only has to
 // switch page, so only press detection is needed, never coordinates - and
 // PENIRQ gives that from one pin, with no SPI traffic and nothing to calibrate.
+// Micro-SD, for the drive log. Its own pins, and its own SPI peripheral: the
+// display is driven on the other one, and both were confirmed working together.
+#define SD_CS   5
+#define SD_SCK  18
+#define SD_MISO 19
+#define SD_MOSI 23
+#define SD_SPI_HZ 20000000
+#define LOG_EVERY_MS 1000      // one CSV row per second
+
 #define TOUCH_IRQ_PIN 36       // low while the panel is pressed
 #define TOUCH_DEBOUNCE_MS 350
 // GPIO 36 is input-only with no internal pull-up, so PENIRQ is held high only
@@ -102,6 +113,8 @@ TFT_eSPI tft = TFT_eSPI();
 #define DIAG_X 6
 #define DIAG_Y 64              // under the fault line, which is the headline
 #define DTC_MAX 8              // raw fault bytes kept
+#define DTC_EVERY_CYCLES 10   // on the dashboard, ask for faults once every this
+                               // many 10-exchange cycles, so about every 30 s
 
 // DEMO_MODE 1: no K-line traffic at all - the dashboard shows simulated
 // values (rpm sweeping into the red zone, battery, coolant warming up) so
@@ -411,6 +424,12 @@ void gaugeSet(int rpm) {
   gaugeSide = ns;
   gaugeColor = col;
 }
+
+SPIClass sdSpi(HSPI);
+File logFile;
+char logName[16] = "";
+volatile uint32_t logRows = 0;
+volatile bool logOn = false;    // false also after a write fails (card pulled)
 
 int16_t sparkBuf[SPARK_PW];     // rpm history, newest last, -1 = no sample
 volatile int ldrRaw = 0;        // last light-sensor reading, for the log line
@@ -740,6 +759,106 @@ void dashFrame() {
   dashReady = true;
 }
 
+// Reads the stored faults: request 07 answers a type FC block. Shared by the
+// diagnostics page's sweep and the dashboard's slow poll, so both store and log
+// them identically.
+bool pollDtc(uint8_t *blk, int *len) {
+  uint8_t req[] = {0x07};
+  if (!requestParam(req, 1, "DTC", blk, len)) return false;
+  if (*len >= 4 && blk[1] == 0xFC) {
+    int n = min(*len - 3, DTC_MAX);
+    bool changed = n != adcDtcLen;
+    for (int i = 0; i < n; i++) {
+      if (adcDtc[i] != blk[2 + i]) changed = true;
+      adcDtc[i] = blk[2 + i];
+    }
+    adcDtcLen = n;
+    if (changed)
+      dbg("  [DTC] type FC data " + hexs(blk + 2, n) +
+          (n == 1 && blk[2] == 0x00 ? "  (no stored faults)"
+                                    : "  !! something is stored - raw, undecoded"));
+  }
+  return true;
+}
+
+// The raw fault bytes as one CSV field: no spaces, so the row needs no quoting.
+String dtcField() {
+  String s;
+  for (int i = 0; i < adcDtcLen && i < DTC_MAX; i++) {
+    char b[3];
+    snprintf(b, sizeof(b), "%02X", adcDtc[i]);
+    s += b;
+  }
+  return s;
+}
+
+// Opens the next free /logNNNN.csv. Nothing on the card is touched beyond
+// adding that one file - it is deliberately NOT formatted or cleared, because a
+// card may well hold something else that matters.
+bool logBegin() {
+  sdSpi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  if (!SD.begin(SD_CS, sdSpi, SD_SPI_HZ)) {
+    Serial.println("SD: no card or no filesystem - driving log is off");
+    return false;
+  }
+  for (int i = 1; i < 10000; i++) {
+    snprintf(logName, sizeof(logName), "/log%04d.csv", i);
+    if (!SD.exists(logName)) break;
+  }
+  logFile = SD.open(logName, FILE_WRITE);
+  if (!logFile) {
+    Serial.println("SD: cannot create " + String(logName) + " - driving log is off");
+    return false;
+  }
+  logFile.println("time_s,link,rpm,batt_v,coolant_c,airtemp_c,airqty_raw,dtc");
+  logFile.flush();
+  Serial.println("SD: logging to " + String(logName) + " on a " +
+                 String((uint32_t)(SD.cardSize() / (1024ULL * 1024ULL))) + " MB card");
+  return true;
+}
+
+// One row per second, on core 0 so a slow card can never delay a K-line echo.
+// Every row is flushed: in a car the power can vanish without warning, and one
+// lost second beats losing the whole file. Logging starts at the first session
+// and then keeps going through dropouts, because a gap in the data is exactly
+// what you want recorded when chasing an intermittent fault.
+// Demo mode has no ECU session, but the log should still run so the whole path
+// can be exercised without a car.
+bool linkUp() { return ecuConnected || DEMO_MODE; }
+
+void logTask(void *param) {
+  bool started = false;
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(LOG_EVERY_MS));
+    if (!logOn) continue;
+    if (!started) {
+      if (!linkUp()) continue;
+      started = true;
+    }
+    String row = String(millis() / 1000.0, 1);
+    row += linkUp() ? ",up," : ",down,";
+    row += (shRpm >= 0 ? String((int)shRpm) : String("")) + ",";
+    row += (shBatt >= 0 ? String(shBatt, 2) : String("")) + ",";
+    row += (shCool > -999 ? String(shCool, 1) : String("")) + ",";
+    row += (shAirT > -999 ? String(shAirT, 1) : String("")) + ",";
+    row += (shAirQ >= 0 ? String(shAirQ, 0) : String("")) + "," + dtcField();
+    unsigned long t0 = millis();
+    size_t n = logFile.println(row);
+    logFile.flush();
+    unsigned long took = millis() - t0;
+    if (n == 0) {                      // card pulled, or the card is full
+      logOn = false;
+      Serial.println("SD: write failed after " + String(logRows) +
+                     " rows - driving log stopped");
+      continue;
+    }
+    logRows = logRows + 1;          // plain ++ on a volatile is deprecated
+    if (logRows <= 3 || logRows % 600 == 0)
+      Serial.println("SD: " + String(logName) + " row " + String(logRows) +
+                     ", write+flush " + String(took) + " ms");
+  }
+}
+
 // ---- Diagnostics page: every ADC channel the ECU answers, raw, plus what the
 // session has seen. Raw on purpose: this is the page for working out what an
 // unknown channel does, and a scaled number would hide that.
@@ -759,6 +878,7 @@ void diagFrame() {
   }
   drawText("SESSION", DIAG_X, 150, ML_DATUM, 1, COL_LABEL, COL_BG, 0);
   drawText("tap anywhere to go back", 314, 232, MR_DATUM, 1, COL_LABEL, COL_BG, 0);
+  // log state bottom left, beside that hint, using space already there
 }
 
 // What is currently on the page, so only changed numbers are redrawn - the
@@ -768,6 +888,7 @@ uint8_t  diagShown[ADC_SWEEP_N];
 uint16_t diagShownSeen = 0;
 uint8_t  diagShownDtc[DTC_MAX];
 int      diagShownDtcLen = -1;
+long     diagShownRows = -1;
 int      diagShownRpm = -1;
 float    diagShownCoolMin = 1e9, diagShownCoolMax = 1e9;
 float    diagShownBattMin = 1e9, diagShownBattMax = 1e9;
@@ -802,6 +923,13 @@ void diagUpdate(bool force) {
     drawText(txt, DIAG_X, 38, ML_DATUM, 2, col, COL_BG, 300);
     diagShownDtcLen = adcDtcLen;
     for (int i = 0; i < adcDtcLen && i < DTC_MAX; i++) diagShownDtc[i] = adcDtc[i];
+  }
+
+  if (force || (long)logRows != diagShownRows) {
+    drawText(logOn ? String(logName + 1) + "  " + String(logRows) + " rows"
+                   : String("no SD log"),
+             DIAG_X, 232, ML_DATUM, 1, logOn ? TFT_GREEN : COL_LABEL, COL_BG, 150);
+    diagShownRows = logRows;
   }
 
   for (int i = 0; i < ADC_SWEEP_N; i++) {
@@ -1608,24 +1736,7 @@ bool pollAndDisplayParams() {
   // channel that answers, so the whole page refreshes in about 12 exchanges.
   if (shPage == PAGE_DIAG) {
     int step = pollN++ % (ADC_SWEEP_N + 1);
-    if (step == ADC_SWEEP_N) {                 // one step asks for faults
-      uint8_t dtcReq[] = {0x07};
-      if (!requestParam(dtcReq, sizeof(dtcReq), "DTC", blk, &len)) return false;
-      if (len >= 4 && blk[1] == 0xFC) {
-        int n = min(len - 3, DTC_MAX);          // [ctr, FC, data..., 03]
-        bool changed = n != adcDtcLen;
-        for (int i = 0; i < n; i++) {
-          if (adcDtc[i] != blk[2 + i]) changed = true;
-          adcDtc[i] = blk[2 + i];
-        }
-        adcDtcLen = n;
-        if (changed)
-          dbg("  [DTC] type FC data " + hexs(blk + 2, n) +
-              (n == 1 && blk[2] == 0x00 ? "  (no stored faults)"
-                                        : "  !! something is stored - raw, undecoded"));
-      }
-      return true;
-    }
+    if (step == ADC_SWEEP_N) return pollDtc(blk, &len);   // one step asks for faults
     uint8_t req[] = {0x08, (uint8_t)step};
     if (!requestParam(req, sizeof(req), "ADC", blk, &len)) return false;
     if (len >= 5 && blk[1] == 0xFB) {
@@ -1635,7 +1746,16 @@ bool pollAndDisplayParams() {
     return true;
   }
 
-  int slot = pollN++ % 10;
+  unsigned long n = pollN++;
+  int slot = n % 10;
+  // Faults are polled on the dashboard as well, not just on page 2, or a drive
+  // would log nothing: they change rarely, so once every DTC_EVERY_CYCLES
+  // cycles is plenty and costs one rpm reading each time.
+  if (slot == 0 && (n / 10) % DTC_EVERY_CYCLES == 0) {
+    if (!pollDtc(blk, &len)) return false;
+    dashValues(lastBatt, lastRpm, lastCool, lastAirT, lastAirQ);
+    return true;
+  }
 
   if (slot == 1) {
     if (!requestParam(battReq, sizeof(battReq), "BATTERY", blk, &len)) return false;
@@ -1727,6 +1847,8 @@ void setup() {
   // All drawing from here on happens in dashTask on core 0; loop() (K-line)
   // runs on core 1, so screen updates never delay a K-line echo.
   xTaskCreatePinnedToCore(dashTask, "dash", 6144, NULL, 1, NULL, 0);
+  logOn = logBegin();
+  if (logOn) xTaskCreatePinnedToCore(logTask, "log", 6144, NULL, 1, NULL, 0);
 
   pinMode(K_TX_PIN, OUTPUT);
   digitalWrite(K_TX_PIN, HIGH);

@@ -87,6 +87,10 @@ SPIGOT_H = 1.8                              # alignment pin on top of each post,
 SPIGOT_CLEAR = 0.3                          # board hole (hole diameter minus this)
 BOARD_GAP = 4.0                             # between CYD and Click
 CLICK_RIGHT_GAP = 6.0                       # right of the Click: room for rail + lid lip
+LID_GAP = 4.0                               # air between the tallest thing on the
+                                            # boards and the lid's underside. Was a
+                                            # hardcoded 2.0, which left only 1.0 mm
+                                            # over the Click's pins and fouled them.
 LID_T = 5.0                                 # lid top plate thickness. 3 mm thicker
                                             # than the first print, to give the badge
                                             # inlay room for more coloured layers.
@@ -94,6 +98,18 @@ LID_T = 5.0                                 # lid top plate thickness. 3 mm thic
                                             # the same 3 mm - see hardware/README.
 RECESS_MARGIN = 2.5                         # sunken screen panel vs the active area
 RECESS_WALL = 1.6                           # wall between the lid top and the sunken panel
+# Four screw ears OUTSIDE the walls, so the shell's inside and every board
+# position stay exactly as they were. The alternative, bosses in the internal
+# corners, needs the clearance round the boards raised from 1 mm to 5 mm.
+EARS = True                                 # False = friction lip only, as before
+# Sized for M3 self-tapping. For M4 instead: boss 8.5, pilot 3.3, hole 4.3 -
+# the ears grow with the boss, so the case gets 3 mm wider.
+EAR_BOSS_OD = 7.0                           # boss outer diameter
+EAR_PILOT = 2.4                             # pilot in the shell, M3 self-tapping
+EAR_HOLE = 3.2                              # clearance hole in the lid, M3
+EAR_WEB = 6.0                               # width of the web joining boss to wall
+EAR_STANDOFF = 1.0                          # gap between boss and wall the web spans
+EAR_INSET_Y = 6.0                           # boss centre in from the front/back edge
 LID_LIP_H = 6.0                             # lip that drops into the shell
 LID_CLEAR = 0.3                             # print clearance lip vs inner wall
 SCREEN_MARGIN = 1.2                         # window larger than the active area
@@ -360,11 +376,11 @@ INNER_D = max(CYD_D, CLICK_D) + 2 * GAP_Y
 # The lid is closed over the Click, so its pins (and anything plugged on them)
 # set the inner height. The CYD posts are then made tall enough to bring the
 # display up to 2 mm under the lid, instead of leaving the screen in a well.
-CLICK_TOP = CLICK_BOARD_Z + CLICK_T + CLICK_PIN_H + 1.0    # floor to above the pins
-INNER_H = max(POST_H_MIN + CYD_T + CYD_STACK_H + 2.0, CLICK_TOP)
-POST_H = INNER_H - 2.0 - CYD_T - CYD_STACK_H           # -> display 2 mm under the lid
+CLICK_TOP = CLICK_BOARD_Z + CLICK_T + CLICK_PIN_H + LID_GAP   # floor to clear the pins
+INNER_H = max(POST_H_MIN + CYD_T + CYD_STACK_H + LID_GAP, CLICK_TOP)
+POST_H = INNER_H - LID_GAP - CYD_T - CYD_STACK_H       # display LID_GAP under the lid
 DISPLAY_TOP = POST_H + CYD_T + CYD_STACK_H             # floor to the glass
-RECESS_DEPTH = max(0.0, INNER_H - DISPLAY_TOP - 2.0)   # 0 here: the lid can stay flat
+RECESS_DEPTH = max(0.0, INNER_H - DISPLAY_TOP - LID_GAP)   # 0 here: lid stays flat
 OUTER_W = INNER_W + 2 * WALL
 OUTER_D = INNER_D + 2 * WALL
 SHELL_H = FLOOR + INNER_H                              # shell wall height
@@ -373,6 +389,26 @@ CYD_X0 = WALL + GAP                                    # board origins inside
 CYD_Y0 = WALL + (INNER_D - CYD_D) / 2 + 0.0
 CLICK_X0 = CYD_X0 + CYD_W + BOARD_GAP
 CLICK_Y0 = WALL + (INNER_D - CLICK_D) / 2
+
+
+def ear_centres():
+    """The four screw positions, outside the left and right walls. One owner, so
+    the shell's pilots and the lid's holes cannot drift apart."""
+    out = EAR_BOSS_OD / 2 + EAR_STANDOFF
+    return [(cx, cy)
+            for cx in (-out, OUTER_W + out)
+            for cy in (EAR_INSET_Y, OUTER_D - EAR_INSET_Y)]
+
+
+def ears(m, z0, z1, hole):
+    """Boss plus the web joining it to the wall, at each of the four corners.
+    Full height on the shell so they print off the bed without support."""
+    if not EARS:
+        return
+    for cx, cy in ear_centres():
+        m.tube(cx, cy, z0, z1, EAR_BOSS_OD, hole)
+        wx0, wx1 = (cx, 0.0) if cx < 0 else (OUTER_W, cx)
+        m.box(wx0, cy - EAR_WEB / 2, z0, wx1, cy + EAR_WEB / 2, z1)
 
 
 def build_bottom():
@@ -400,6 +436,10 @@ def build_bottom():
             m.tube(CYD_X0 + dx, CYD_Y0 + dy, FLOOR, FLOOR + POST_H, POST_OD, POST_ID)
             m.tube(CYD_X0 + dx, CYD_Y0 + dy, FLOOR + POST_H, FLOOR + POST_H + SPIGOT_H,
                    spigot, POST_ID)
+    # Screw ears: full height, so they sit on the bed and need no support, and
+    # the pilot runs right through, so nothing has to bridge over a hole mid
+    # print. 24.1 mm of pilot takes any sensible screw without poking out.
+    ears(m, 0, SHELL_H, EAR_PILOT)
     click_holder(m)
     return m
 
@@ -524,6 +564,7 @@ def build_lid(with_badge=True):
         m.plate_with_window(0, 0, OUTER_W, OUTER_D, 0, LID_T, wx0, wy0, wx1, wy1)
         if with_badge:
             lid_badge(m, wx1)
+        ears(m, 0, LID_T, EAR_HOLE)
         lid_lip(m)
         return m
     # top plate with a big hole over the display, then the sunken panel with
@@ -536,6 +577,7 @@ def build_lid(with_badge=True):
     m.box(rx0, ry1 - RECESS_WALL, -d, rx1, ry1, LID_T)
     if with_badge:
         lid_badge(m, rx1)
+    ears(m, 0, LID_T, EAR_HOLE)
     lid_lip(m)
     return m
 
@@ -627,6 +669,11 @@ def build_fitcheck():
         m.tube(cx, cy, 2.0, 2.0 + ph, od, idia)
         m.tube(cx, cy, 2.0 + ph, 2.0 + ph + SPIGOT_H,
                CYD_HOLE_DIA - SPIGOT_CLEAR, idia)      # same alignment pins as the shell
+    # One screw boss too, at the real diameter, so the thread can be tried in a
+    # few minutes rather than after printing the whole shell.
+    if EARS:
+        m.tube(x1 - EAR_BOSS_OD / 2 - 1.0, y0 + EAR_BOSS_OD / 2 + 1.0,
+               0, 2.0 + ph + SPIGOT_H, EAR_BOSS_OD, EAR_PILOT)
     return m
 
 
