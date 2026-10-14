@@ -21,3 +21,7 @@ logo.png
 firmware/kwp71_m2104_esp32/logo_data.h
 clover.png
 tools/badge_data.py
+
+# Source photo for docs/images/end.jpg: the downscaled copy is the one in the
+# repository, the 2.7 MB original does not need to be.
+end.jpg
